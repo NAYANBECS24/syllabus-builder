@@ -3,6 +3,12 @@
 const isLocal = typeof window !== 'undefined' && 
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
+// ── Provider defaults ────────────────────────────────────────────────
+const SYLEX_NVIDIA_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
+if (typeof window !== 'undefined') {
+  window.SYLEX_NVIDIA_MODEL = SYLEX_NVIDIA_MODEL;
+}
+
 const defaultServerUrl = (typeof window !== 'undefined' && window.location.origin && window.location.origin !== 'null')
   ? (isLocal && window.location.port !== '7823' && window.location.port !== '' ? 'http://localhost:7823' : window.location.origin)
   : 'http://localhost:7823';
@@ -234,7 +240,7 @@ async function testOnlineKey() {
   const statusMsg = $('key-status-msg');
   const btn = $('btn-test-key');
 
-  if (!key && provider === 'gemini') {
+  if (!key && (provider === 'gemini' || provider === 'openai')) {
     if (statusMsg) { statusMsg.style.color = 'var(--accent-amber)'; statusMsg.textContent = '⚠️ Enter an API key first'; }
     toast('Enter an API key first', 'error');
     return;
@@ -643,7 +649,7 @@ async function loadTask2ForCourse(course) {
       form.append('mode', STATE.extractionMode || 'offline');
       if (STATE.extractionMode === 'online') {
         const provider = $('online-provider')?.value || 'nvidia';
-        const model = ($('online-model')?.value || (provider === 'nvidia' ? 'nvidia/nemotron-3-super-120b-a12b' : 'gemini-2.0-flash')).trim();
+        const model = ($('online-model')?.value || (provider === 'nvidia' ? SYLEX_NVIDIA_MODEL : 'gemini-2.0-flash')).trim();
         const apiKey = ($('online-key')?.value || '').trim();
         const endpoint = ($('online-endpoint')?.value || '').trim();
         form.append('provider', provider);

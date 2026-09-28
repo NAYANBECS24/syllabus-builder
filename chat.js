@@ -558,7 +558,7 @@ async function sendChat() {
   } catch (_) {}
 
   const onlineProvider = (document.getElementById('online-provider')?.value || savedSettings.provider || 'nvidia').toLowerCase();
-  const onlineModel = (document.getElementById('online-model')?.value || savedSettings.model || 'nvidia/nemotron-3-super-120b-a12b').trim();
+  const onlineModel = (document.getElementById('online-model')?.value || savedSettings.model || (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b')).trim();
   const onlineKey = (document.getElementById('online-key')?.value || savedSettings.key || '').trim();
   const onlineEndpoint = (document.getElementById('online-endpoint')?.value || savedSettings.endpoint || '').trim();
 
@@ -598,9 +598,7 @@ async function sendChat() {
       console.warn('[Server Chat Proxy Note]', serverErr);
     }
 
-    // 2. Direct browser-to-cloud fallback (if server is offline or proxy failed).
-    // Only attempted when the user supplied their own key; a server-held key is
-    // never exposed to the browser.
+    // 2. Direct browser-to-cloud fallback (if server is offline or proxy failed)
     if (onlineProvider === 'nvidia' && onlineKey) {
       try {
         const syllabusText = formatSyllabusContext(ctx);

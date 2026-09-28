@@ -21,9 +21,8 @@ PORT      = 7823
 BASE_DIR  = Path(__file__).parent
 SYLEX_PY  = BASE_DIR / "sylex.py"
 
-# Server-side fallback credential. Never embed a key in source control:
-# set NVIDIA_API_KEY in the Vercel project env (or a local .env) instead.
-# Clients may still pass their own key per-request, which takes precedence.
+# Server-side fallback credential. Configure NVIDIA_API_KEY in Vercel project
+# settings (or a local .env). Request-supplied keys take precedence.
 DEFAULT_NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "").strip()
 
 # Where the prompt lives locally vs. inside a Vercel function bundle, where the
@@ -812,6 +811,8 @@ class Handler(BaseHTTPRequestHandler):
         candidate_models = [
             requested_model,
             "nvidia/nemotron-3-super-120b-a12b",
+            "nvidia/nemotron-3-ultra-550b-a55b",
+            "nvidia/nemotron-3.5-lightning-30b-a3b",
         ]
         seen = set()
         models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
