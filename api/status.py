@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Vercel Serverless Function: GET /api"""
+"""Vercel Serverless Function: GET /api/status"""
 
 import json
 from http.server import BaseHTTPRequestHandler
@@ -14,17 +14,10 @@ class handler(BaseHTTPRequestHandler):
 
     def do_GET(self):
         body = json.dumps({
-            "name": "SYLEX Syllabus Extraction API",
-            "version": "3.0",
             "status": "online",
-            "endpoints": [
-                "/api/status",
-                "/api/extract",
-                "/api/chat",
-                "/api/test-key",
-                "/api/curriculum-audit",
-                "/api/export-dossier"
-            ]
+            "version": "3.0",
+            "offline": True,
+            "platform": "vercel-serverless"
         }, indent=2).encode('utf-8')
 
         self.send_response(200)

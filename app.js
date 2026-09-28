@@ -248,25 +248,34 @@ async function testOnlineKey() {
   if (statusMsg) { statusMsg.style.color = 'var(--accent-cyan)'; statusMsg.textContent = 'Testing connection...'; }
 
   try {
-    if (STATE.serverOnline) {
-      // Test via server-side proxy to completely bypass browser CORS restrictions
-      const resp = await fetch(STATE.serverUrl + '/api/test-key', {
+    const fetchBase = (STATE.serverUrl || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/+$/, '');
+    
+    // 1. Test via server-side proxy to completely bypass browser CORS restrictions
+    try {
+      const resp = await fetch(fetchBase + '/api/test-key', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ provider, key, model, endpoint }),
-        signal: AbortSignal.timeout(20000)
+        signal: AbortSignal.timeout(15000)
       });
-      const data = await resp.json();
-      if (resp.ok && data.status === 'ok') {
-        const provName = provider === 'nvidia' ? 'NVIDIA Nemotron' : (provider === 'gemini' ? 'Google Gemini' : provider.toUpperCase());
-        if (statusMsg) {
-          statusMsg.style.color = 'var(--accent-green)';
-          statusMsg.textContent = `✓ ${provName} Connected! (${data.latency_ms || ''}ms)`;
+      if (resp.ok) {
+        const data = await resp.json();
+        if (data.status === 'ok') {
+          const provName = provider === 'nvidia' ? 'NVIDIA Nemotron' : (provider === 'gemini' ? 'Google Gemini' : provider.toUpperCase());
+          if (statusMsg) {
+            statusMsg.style.color = 'var(--accent-green)';
+            statusMsg.textContent = `✓ ${provName} Connected! (${data.latency_ms || ''}ms)`;
+          }
+          toast(`✅ ${provName} connection verified!`, 'success');
+          STATE.serverOnline = true;
+          return;
+        } else if (data.error) {
+          throw new Error(data.error);
         }
-        toast(`✅ ${provName} connection verified!`, 'success');
-        return;
-      } else {
-        throw new Error(data.error || `HTTP ${resp.status}`);
+      }
+    } catch (serverErr) {
+      if (provider === 'nvidia') {
+        throw serverErr;
       }
     }
 
