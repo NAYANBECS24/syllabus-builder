@@ -443,8 +443,8 @@ class Handler(BaseHTTPRequestHandler):
                 # Parse multipart to get PDF bytes + params
                 pdf_bytes, course, hints_json, debug_flag, mode, provider, model, api_key, endpoint = self._parse_multipart(ctype, body)
 
-                if pdf_bytes is None:
-                    self.send_json({"error": "No PDF received"}, 400); return
+                if not pdf_bytes:
+                    self.send_json({"error": "No PDF received or file is empty"}, 400); return
 
                 # In-memory SHA-256 cache check
                 cache_key = hashlib.sha256(
