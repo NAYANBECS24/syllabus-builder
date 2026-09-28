@@ -461,8 +461,8 @@ function updateChatModeUI(mode) {
   const btnOff = document.getElementById('btn-chatmode-offline');
   const modePill = document.getElementById('chat-mode-pill');
   const modeSub = document.getElementById('chat-mode-subtitle');
-  const provider = (document.getElementById('online-provider')?.value || 'nvidia').toUpperCase();
-  const model = document.getElementById('online-model')?.value || 'nvidia/nemotron-3-super-120b-a12b';
+  const provider = 'NVIDIA';
+  const model = typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b';
 
   if (btnOn) btnOn.classList.toggle('active', isOnline);
   if (btnOff) btnOff.classList.toggle('active', !isOnline);
@@ -551,16 +551,10 @@ async function sendChat() {
     : 'http://localhost:7823';
   const serverUrl = (window.STATE?.serverUrl || defaultServerUrl).replace(/\/+$/, '');
 
-  let savedSettings = {};
-  try {
-    const raw = localStorage.getItem('sylex_online_settings');
-    if (raw) savedSettings = JSON.parse(raw);
-  } catch (_) {}
-
-  const onlineProvider = (document.getElementById('online-provider')?.value || savedSettings.provider || 'nvidia').toLowerCase();
-  const onlineModel = (document.getElementById('online-model')?.value || savedSettings.model || (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b')).trim();
-  const onlineKey = (document.getElementById('online-key')?.value || savedSettings.key || '').trim();
-  const onlineEndpoint = (document.getElementById('online-endpoint')?.value || savedSettings.endpoint || '').trim();
+  const onlineProvider = 'nvidia';
+  const onlineModel = typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b';
+  const onlineKey = '';
+  const onlineEndpoint = '';
 
   // If Online Mode is active
   if (isOnline) {

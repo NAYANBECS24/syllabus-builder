@@ -275,50 +275,8 @@
 
   <!-- Online Cloud AI Drawer -->
   <div id="online-config-drawer" style="display:none;margin-top:1.25rem;padding:1.25rem;background:var(--bg-elevated);border:1px solid var(--border-accent);border-radius:var(--radius-md)">
-    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
-      <div style="font-weight:700;color:var(--text-accent);font-size:0.88rem;display:flex;align-items:center;gap:6px">
-        <span>Cloud Model Configuration</span>
-      </div>
+    <div style="display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:12px">
       <button class="btn btn-sm btn-ghost" type="button" onclick="testOnlineKey()" id="btn-test-key">Test Connection</button>
-    </div>
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
-      <div class="option-group">
-        <label>AI Provider</label>
-        <select id="online-provider" class="select-input" onchange="onProviderChange()">
-          <option value="nvidia" selected>NVIDIA NIM (Nemotron 3 Super 120B / Ultra 550B)</option>
-          <option value="gemini">Google Gemini (Gemini 2.0 / 1.5 Pro)</option>
-          <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
-          <option value="custom">Custom / Local LLM (Ollama, vLLM)</option>
-        </select>
-      </div>
-      <div class="option-group">
-        <label>Model ID</label>
-        <input type="text" id="online-model" class="text-input" value="nvidia/nemotron-3-super-120b-a12b" placeholder="e.g. nvidia/nemotron-3-super-120b-a12b" onchange="saveOnlineSettings()"/>
-      </div>
-    </div>
-    <div style="margin-top:1rem">
-      <div class="option-group">
-        <label style="display:flex;justify-content:space-between">
-          <span>API Key</span>
-          <span style="font-size:0.7rem;text-transform:none;color:var(--text-muted)">Optional if the server has NVIDIA_API_KEY set</span>
-        </label>
-        <div style="display:flex;gap:8px">
-          <input type="password" id="online-key" class="text-input" value="" placeholder="Leave blank to use the server key" onchange="saveOnlineSettings()"/>
-          <button class="btn btn-sm btn-ghost" type="button" onclick="toggleKeyVisibility()" id="btn-toggle-key" style="white-space:nowrap">Show</button>
-        </div>
-      </div>
-    </div>
-    <div id="custom-endpoint-group" style="display:none;margin-top:1rem">
-      <div class="option-group">
-        <label>Custom Endpoint URL</label>
-        <input type="text" id="online-endpoint" class="text-input" placeholder="http://localhost:11434/v1" onchange="saveOnlineSettings()"/>
-      </div>
-    </div>
-    <div style="margin-top:1rem;display:flex;justify-content:space-between;align-items:center;font-size:0.8rem;color:var(--text-secondary);flex-wrap:wrap;gap:8px">
-      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
-        <input type="checkbox" id="online-autofallback" checked onchange="saveOnlineSettings()"/>
-        <span>Auto-fallback to Deterministic Local Engine on timeout or rate limit</span>
-      </label>
       <span id="key-status-msg" style="font-size:0.75rem;font-weight:600"></span>
     </div>
   </div>

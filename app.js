@@ -5,6 +5,8 @@ const isLocal = typeof window !== 'undefined' &&
 
 // ── Provider defaults ────────────────────────────────────────────────
 const SYLEX_NVIDIA_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
+const SYLEX_CLOUD_PROVIDER = 'nvidia';
+const SYLEX_CLOUD_AUTOFALLBACK = true;
 if (typeof window !== 'undefined') {
   window.SYLEX_NVIDIA_MODEL = SYLEX_NVIDIA_MODEL;
 }
@@ -153,170 +155,42 @@ function setMode(mode) {
 }
 window.setMode = setMode;
 
-function onProviderChange() {
-  const p = $('online-provider')?.value || 'nvidia';
-  const mInput = $('online-model');
-  const epGroup = $('custom-endpoint-group');
-  if (p === 'nvidia') {
-    if (mInput && (!mInput.value || mInput.value === 'gemini-2.0-flash' || mInput.value === 'gpt-4o-mini' || mInput.value === 'llama3.2')) {
-      mInput.value = 'nvidia/nemotron-3-super-120b-a12b';
-    }
-    if (epGroup) epGroup.style.display = 'none';
-  } else if (p === 'gemini') {
-    if (mInput && (!mInput.value || mInput.value.includes('nemotron') || mInput.value === 'gpt-4o-mini' || mInput.value === 'llama3.2')) {
-      mInput.value = 'gemini-2.0-flash';
-    }
-    if (epGroup) epGroup.style.display = 'none';
-  } else if (p === 'openai') {
-    if (mInput && (!mInput.value || mInput.value.includes('nemotron') || mInput.value === 'gemini-2.0-flash' || mInput.value === 'llama3.2')) {
-      mInput.value = 'gpt-4o-mini';
-    }
-    if (epGroup) epGroup.style.display = 'none';
-  } else if (p === 'custom') {
-    if (mInput && (!mInput.value || mInput.value.includes('nemotron') || mInput.value === 'gemini-2.0-flash' || mInput.value === 'gpt-4o-mini')) {
-      mInput.value = 'llama3.2';
-    }
-    if (epGroup) epGroup.style.display = 'block';
-  }
-  saveOnlineSettings();
-  if (typeof window.updateChatModeUI === 'function') {
-    window.updateChatModeUI(STATE.extractionMode);
-  }
-}
-window.onProviderChange = onProviderChange;
-
-function toggleKeyVisibility() {
-  const inp = $('online-key');
-  const btn = $('btn-toggle-key');
-  if (!inp) return;
-  if (inp.type === 'password') {
-    inp.type = 'text';
-    if (btn) btn.textContent = '🙈 Hide';
-  } else {
-    inp.type = 'password';
-    if (btn) btn.textContent = '👁 Show';
-  }
-}
-window.toggleKeyVisibility = toggleKeyVisibility;
-
-function saveOnlineSettings() {
-  const settings = {
-    provider: $('online-provider')?.value || 'nvidia',
-    model: ($('online-model')?.value || 'nvidia/nemotron-3-super-120b-a12b').trim(),
-    key: ($('online-key')?.value || '').trim(),
-    endpoint: ($('online-endpoint')?.value || '').trim(),
-    autofallback: $('online-autofallback')?.checked ?? true
-  };
-  localStorage.setItem('sylex_online_settings', JSON.stringify(settings));
-}
-window.saveOnlineSettings = saveOnlineSettings;
-
 function loadOnlineSettings() {
-  try {
-    const raw = localStorage.getItem('sylex_online_settings');
-    const settings = raw ? JSON.parse(raw) : null;
-    if (settings) {
-      if ($('online-provider')) $('online-provider').value = settings.provider || 'nvidia';
-      if ($('online-model')) $('online-model').value = settings.model || 'nvidia/nemotron-3-super-120b-a12b';
-      if ($('online-key')) $('online-key').value = settings.key || '';
-      if ($('online-endpoint')) $('online-endpoint').value = settings.endpoint || '';
-      if ($('online-autofallback')) $('online-autofallback').checked = settings.autofallback ?? true;
-    } else {
-      if ($('online-provider')) $('online-provider').value = 'nvidia';
-      if ($('online-model')) $('online-model').value = 'nvidia/nemotron-3-super-120b-a12b';
-      if ($('online-key')) $('online-key').value = '';
-    }
-  } catch (_) {}
   const savedMode = localStorage.getItem('sylex_mode') || 'online';
   setMode(savedMode);
-  onProviderChange();
 }
 
 async function testOnlineKey() {
-  const provider = $('online-provider')?.value || 'nvidia';
-  const model = ($('online-model')?.value || 'nvidia/nemotron-3-super-120b-a12b').trim();
-  const key = ($('online-key')?.value || '').trim();
-  const endpoint = ($('online-endpoint')?.value || '').trim();
+  const provider = SYLEX_CLOUD_PROVIDER;
+  const model = SYLEX_NVIDIA_MODEL;
   const statusMsg = $('key-status-msg');
   const btn = $('btn-test-key');
-
-  if (!key && (provider === 'gemini' || provider === 'openai')) {
-    if (statusMsg) { statusMsg.style.color = 'var(--accent-amber)'; statusMsg.textContent = '⚠️ Enter an API key first'; }
-    toast('Enter an API key first', 'error');
-    return;
-  }
 
   if (btn) btn.disabled = true;
   if (statusMsg) { statusMsg.style.color = 'var(--accent-cyan)'; statusMsg.textContent = 'Testing connection...'; }
 
   try {
-    const fetchBase = (STATE.serverUrl || (typeof window !== 'undefined' ? window.location.origin : '')).replace(/\/+$/, '');
-    
-    // 1. Test via server-side proxy to completely bypass browser CORS restrictions
-    try {
-      const resp = await fetch(fetchBase + '/api/test-key', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider, key, model, endpoint }),
-        signal: AbortSignal.timeout(15000)
-      });
-      if (resp.ok) {
-        const data = await resp.json();
-        if (data.status === 'ok') {
-          const provName = provider === 'nvidia' ? 'NVIDIA Nemotron' : (provider === 'gemini' ? 'Google Gemini' : provider.toUpperCase());
-          if (statusMsg) {
-            statusMsg.style.color = 'var(--accent-green)';
-            statusMsg.textContent = `✓ ${provName} Connected! (${data.latency_ms || ''}ms)`;
-          }
-          toast(`✅ ${provName} connection verified!`, 'success');
-          STATE.serverOnline = true;
-          return;
-        } else if (data.error) {
-          throw new Error(data.error);
-        }
-      }
-    } catch (serverErr) {
-      if (provider === 'nvidia') {
-        throw serverErr;
-      }
+    const fetchBase = (!isLocal && typeof window !== 'undefined' ? window.location.origin : STATE.serverUrl).replace(/\/+$/, '');
+    const resp = await fetch(fetchBase + '/api/test-key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ provider, model }),
+      signal: AbortSignal.timeout(25000)
+    });
+    const data = await resp.json().catch(() => ({}));
+    if (!resp.ok || data.status !== 'ok') {
+      throw new Error(data.error || `Vercel function returned HTTP ${resp.status}`);
     }
-
-    // Fallback direct browser fetch if server not reachable
-    if (provider === 'gemini') {
-      const resp = await fetch(`https://generativelanguage.googleapis.com/v1beta/models?key=${key}`, { signal: AbortSignal.timeout(6000) });
-      if (resp.ok) {
-        if (statusMsg) { statusMsg.style.color = 'var(--accent-green)'; statusMsg.textContent = '✓ Gemini API Connected'; }
-        toast('✅ Google Gemini API key valid!', 'success');
-      } else {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error?.message || `HTTP ${resp.status}`);
-      }
-    } else if (provider === 'openai') {
-      const resp = await fetch('https://api.openai.com/v1/models', {
-        headers: { 'Authorization': `Bearer ${key}` },
-        signal: AbortSignal.timeout(6000)
-      });
-      if (resp.ok) {
-        if (statusMsg) { statusMsg.style.color = 'var(--accent-green)'; statusMsg.textContent = '✓ OpenAI API Connected'; }
-        toast('✅ OpenAI API key valid!', 'success');
-      } else {
-        const err = await resp.json().catch(() => ({}));
-        throw new Error(err.error?.message || `HTTP ${resp.status}`);
-      }
-    } else {
-      const url = (endpoint || 'http://localhost:11434/v1') + '/models';
-      const headers = key ? { 'Authorization': `Bearer ${key}` } : {};
-      const resp = await fetch(url, { headers, signal: AbortSignal.timeout(5000) });
-      if (resp.ok) {
-        if (statusMsg) { statusMsg.style.color = 'var(--accent-green)'; statusMsg.textContent = '✓ Custom Endpoint Connected'; }
-        toast('✅ Custom endpoint connected!', 'success');
-      } else {
-        throw new Error(`HTTP ${resp.status}`);
-      }
+    if (statusMsg) {
+      statusMsg.style.color = 'var(--accent-green)';
+      statusMsg.textContent = `Connected (${data.latency_ms || 0}ms)`;
     }
+    toast('Connection verified', 'success');
+    STATE.serverOnline = true;
   } catch (e) {
-    if (statusMsg) { statusMsg.style.color = 'var(--accent-red)'; statusMsg.textContent = '✗ ' + e.message; }
-    toast('❌ Connection failed: ' + e.message, 'error');
+    const message = e.name === 'TimeoutError' ? 'Connection timed out' : e.message;
+    if (statusMsg) { statusMsg.style.color = 'var(--accent-red)'; statusMsg.textContent = message; }
+    toast('Connection failed: ' + message, 'error');
   } finally {
     if (btn) btn.disabled = false;
   }
@@ -375,29 +249,8 @@ async function runExtraction() {
 
     form.append('mode', mode);
     if (mode === 'online') {
-      const provider = $('online-provider')?.value || 'gemini';
-      const model = ($('online-model')?.value || 'gemini-2.0-flash').trim();
-      const apiKey = ($('online-key')?.value || '').trim();
-      const endpoint = ($('online-endpoint')?.value || '').trim();
-      const autoFallback = $('online-autofallback')?.checked ?? true;
-
-      if (!apiKey && provider !== 'custom') {
-        if (autoFallback) {
-          toast('⚠️ No API key set for Online Mode. Auto-falling back to Offline Engine...', 'error');
-          form.set('mode', 'offline');
-        } else {
-          toast('❌ Please enter an API Key for Online Mode, or switch to Offline Engine.', 'error');
-          $('online-key')?.focus();
-          $('extract-progress').style.display = 'none';
-          $('btn-run').disabled = false;
-          return;
-        }
-      } else {
-        form.append('provider', provider);
-        form.append('model', model);
-        form.append('api_key', apiKey);
-        if (endpoint) form.append('endpoint', endpoint);
-      }
+      form.append('provider', SYLEX_CLOUD_PROVIDER);
+      form.append('model', SYLEX_NVIDIA_MODEL);
     }
 
     setProgress(20, mode === 'online' ? 'Running Cloud AI Extraction...' : 'Sending to offline engine...');
@@ -410,7 +263,7 @@ async function runExtraction() {
     let data = await resp.json();
 
     if (data.error) {
-      if (mode === 'online' && $('online-autofallback')?.checked) {
+      if (mode === 'online' && SYLEX_CLOUD_AUTOFALLBACK) {
         toast(`⚠️ Cloud AI failed: ${data.error}. Auto-falling back to Offline Engine...`, 'error');
         setProgress(30, 'Running local offline engine...');
         form.set('mode', 'offline');
@@ -648,14 +501,8 @@ async function loadTask2ForCourse(course) {
 
       form.append('mode', STATE.extractionMode || 'offline');
       if (STATE.extractionMode === 'online') {
-        const provider = $('online-provider')?.value || 'nvidia';
-        const model = ($('online-model')?.value || (provider === 'nvidia' ? SYLEX_NVIDIA_MODEL : 'gemini-2.0-flash')).trim();
-        const apiKey = ($('online-key')?.value || '').trim();
-        const endpoint = ($('online-endpoint')?.value || '').trim();
-        form.append('provider', provider);
-        form.append('model', model);
-        form.append('api_key', apiKey);
-        if (endpoint) form.append('endpoint', endpoint);
+        form.append('provider', SYLEX_CLOUD_PROVIDER);
+        form.append('model', SYLEX_NVIDIA_MODEL);
       }
       const resp = await fetch(STATE.serverUrl + '/api/extract', {
         method: 'POST', body: form,
