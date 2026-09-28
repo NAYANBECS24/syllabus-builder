@@ -711,6 +711,22 @@ python run.py</pre>
     </div>
 
     <div class="settings-group">
+      <div class="settings-group-title">Cloud AI Model</div>
+      <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem">
+        Select the NVIDIA model used by Cloud AI extraction and the curriculum assistant.
+      </div>
+      <label for="cloud-model-select" style="display:block;margin-bottom:0.45rem;font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase">Model</label>
+      <select id="cloud-model-select" class="select-input" onchange="saveCloudModelSetting()">
+        <option value="nvidia/nemotron-3-super-120b-a12b">Nemotron 3 Super 120B</option>
+        <option value="nvidia/nemotron-3-ultra-550b-a55b">Nemotron 3 Ultra 550B</option>
+        <option value="nvidia/nemotron-3.5-lightning-30b-a3b">Nemotron 3.5 Lightning 30B</option>
+      </select>
+      <div style="margin-top:0.75rem;font-size:0.76rem;color:var(--text-muted)">
+        Connection credentials are managed by the deployed Vercel server.
+      </div>
+    </div>
+
+    <div class="settings-group">
       <div class="settings-group-title">Hints Override Template</div>
       <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">
         Define custom course boundary overrides for adversarial or complex layouts.

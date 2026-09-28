@@ -462,7 +462,9 @@ function updateChatModeUI(mode) {
   const modePill = document.getElementById('chat-mode-pill');
   const modeSub = document.getElementById('chat-mode-subtitle');
   const provider = 'NVIDIA';
-  const model = typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b';
+  const model = typeof window.getSylexCloudModel === 'function'
+    ? window.getSylexCloudModel()
+    : (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b');
 
   if (btnOn) btnOn.classList.toggle('active', isOnline);
   if (btnOff) btnOff.classList.toggle('active', !isOnline);
@@ -552,7 +554,9 @@ async function sendChat() {
   const serverUrl = (window.STATE?.serverUrl || defaultServerUrl).replace(/\/+$/, '');
 
   const onlineProvider = 'nvidia';
-  const onlineModel = typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b';
+  const onlineModel = typeof window.getSylexCloudModel === 'function'
+    ? window.getSylexCloudModel()
+    : (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b');
   const onlineKey = '';
   const onlineEndpoint = '';
 

@@ -29,6 +29,25 @@ window.STATE = STATE;
 const $ = id => document.getElementById(id);
 const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 
+function getCloudModel() {
+  const selector = $('cloud-model-select');
+  const savedModel = localStorage.getItem('sylex_cloud_model');
+  const availableModels = selector ? [...selector.options].map(option => option.value) : [];
+  const model = selector?.value || savedModel || SYLEX_NVIDIA_MODEL;
+  return !availableModels.length || availableModels.includes(model) ? model : SYLEX_NVIDIA_MODEL;
+}
+
+function saveCloudModelSetting() {
+  localStorage.setItem('sylex_cloud_model', getCloudModel());
+  if (typeof window.updateChatModeUI === 'function') {
+    window.updateChatModeUI(STATE.extractionMode);
+  }
+  toast('Cloud model updated', 'success');
+}
+
+window.getSylexCloudModel = getCloudModel;
+window.saveCloudModelSetting = saveCloudModelSetting;
+
 // ── Navigation ──────────────────────────────────────────────────────
 function navigate(section) {
   document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
@@ -156,13 +175,18 @@ function setMode(mode) {
 window.setMode = setMode;
 
 function loadOnlineSettings() {
+  const selector = $('cloud-model-select');
+  const savedModel = localStorage.getItem('sylex_cloud_model');
+  if (selector && savedModel && [...selector.options].some(option => option.value === savedModel)) {
+    selector.value = savedModel;
+  }
   const savedMode = localStorage.getItem('sylex_mode') || 'online';
   setMode(savedMode);
 }
 
 async function testOnlineKey() {
   const provider = SYLEX_CLOUD_PROVIDER;
-  const model = SYLEX_NVIDIA_MODEL;
+  const model = getCloudModel();
   const statusMsg = $('key-status-msg');
   const btn = $('btn-test-key');
 
@@ -250,7 +274,7 @@ async function runExtraction() {
     form.append('mode', mode);
     if (mode === 'online') {
       form.append('provider', SYLEX_CLOUD_PROVIDER);
-      form.append('model', SYLEX_NVIDIA_MODEL);
+      form.append('model', getCloudModel());
     }
 
     setProgress(20, mode === 'online' ? 'Running Cloud AI Extraction...' : 'Sending to offline engine...');
@@ -502,7 +526,7 @@ async function loadTask2ForCourse(course) {
       form.append('mode', STATE.extractionMode || 'offline');
       if (STATE.extractionMode === 'online') {
         form.append('provider', SYLEX_CLOUD_PROVIDER);
-        form.append('model', SYLEX_NVIDIA_MODEL);
+        form.append('model', getCloudModel());
       }
       const resp = await fetch(STATE.serverUrl + '/api/extract', {
         method: 'POST', body: form,
