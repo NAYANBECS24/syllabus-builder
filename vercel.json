@@ -1,3 +1,13 @@
 {
-  "version": 2
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "version": 2,
+  "framework": null,
+  "functions": {
+    "api/*.py": {
+      "runtime": "python3.12",
+      "maxDuration": 60,
+      "memory": 2048,
+      "includeFiles": "{sylex.py,SYSTEM_PROMPT.md}"
+    }
+  }
 }

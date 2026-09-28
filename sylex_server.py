@@ -21,6 +21,39 @@ PORT      = 7823
 BASE_DIR  = Path(__file__).parent
 SYLEX_PY  = BASE_DIR / "sylex.py"
 
+# Server-side fallback credential. Never embed a key in source control:
+# set NVIDIA_API_KEY in the Vercel project env (or a local .env) instead.
+# Clients may still pass their own key per-request, which takes precedence.
+DEFAULT_NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "").strip()
+
+# Where the prompt lives locally vs. inside a Vercel function bundle, where the
+# working directory is not the repo root. Bundled with functions["api/*.py"]
+# .includeFiles in vercel.json.
+SYSTEM_PROMPT_FILENAME = "SYSTEM_PROMPT.md"
+
+
+def _read_system_prompt() -> str:
+    """Read SYSTEM_PROMPT.md from the first location that exists."""
+    candidates = []
+    env_path = os.environ.get("SYSTEM_PROMPT_PATH", "").strip()
+    if env_path:
+        candidates.append(Path(env_path))
+    here = Path(__file__).resolve().parent
+    candidates += [
+        here / SYSTEM_PROMPT_FILENAME,
+        here.parent / SYSTEM_PROMPT_FILENAME,
+        Path.cwd() / SYSTEM_PROMPT_FILENAME,
+    ]
+    for candidate in candidates:
+        try:
+            if candidate.is_file():
+                text = candidate.read_text(encoding="utf-8").strip()
+                if text:
+                    return text
+        except Exception:
+            continue
+    return ""
+
 # Thread-safe in-memory LRU Cache for sub-millisecond repeated extractions
 class ExtractionCache:
     def __init__(self, max_items: int = 256):
@@ -381,11 +414,17 @@ class Handler(BaseHTTPRequestHandler):
                 t0 = time.time()
 
                 if provider == "nvidia":
+                    if not (key or DEFAULT_NVIDIA_API_KEY):
+                        self.send_json(
+                            {"error": "No NVIDIA API key configured. Set NVIDIA_API_KEY on the server or supply one in the request."},
+                            400
+                        )
+                        return
                     content, reasoning, m_used = self._call_nvidia_nemotron(
                         system_prompt="You are a helpful AI assistant. Answer concisely in one sentence.",
                         user_content="Write a 1-sentence verification that GPU computing is active.",
                         model=model or "nvidia/nemotron-3-super-120b-a12b",
-                        api_key=key or "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",
+                        api_key=key or DEFAULT_NVIDIA_API_KEY,
                         endpoint=endpoint,
                         max_tokens=256,
                         timeout=20.0
@@ -762,7 +801,12 @@ class Handler(BaseHTTPRequestHandler):
                               max_tokens: int = 2048, timeout: float = 8.0):
         """Call NVIDIA NIM API using direct HTTP request with rapid response and fallback."""
         base_url = endpoint.rstrip('/') if endpoint else "https://integrate.api.nvidia.com/v1"
-        key = api_key or "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"
+        key = (api_key or DEFAULT_NVIDIA_API_KEY).strip()
+        if not key:
+            raise RuntimeError(
+                "No NVIDIA API key available. Set the NVIDIA_API_KEY environment "
+                "variable on the server, or supply one in the request."
+            )
         requested_model = model if model and model not in ("gemini-2.0-flash", "gpt-4o-mini", "llama3.2") else "nvidia/nemotron-3-super-120b-a12b"
 
         candidate_models = [
@@ -821,7 +865,7 @@ class Handler(BaseHTTPRequestHandler):
         mode        = "offline"
         provider    = "nvidia"
         model       = "nvidia/nemotron-3-super-120b-a12b"
-        api_key     = "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"
+        api_key     = DEFAULT_NVIDIA_API_KEY
         endpoint    = ""
 
         if msg.is_multipart():
@@ -855,7 +899,7 @@ class Handler(BaseHTTPRequestHandler):
                 elif 'name="api_key"' in cd:
                     v = part.get_payload(decode=True)
                     if isinstance(v, bytes): v = v.decode('utf-8', 'ignore')
-                    api_key = (v or "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").strip()
+                    api_key = (v or DEFAULT_NVIDIA_API_KEY).strip()
                 elif 'name="endpoint"' in cd:
                     v = part.get_payload(decode=True)
                     if isinstance(v, bytes): v = v.decode('utf-8', 'ignore')
@@ -1194,14 +1238,7 @@ class Handler(BaseHTTPRequestHandler):
 
         context_str = "\n\n".join(ctx_parts)
 
-        prompt_file = Path(__file__).parent / "SYSTEM_PROMPT.md"
-        base_prompt = ""
-        if prompt_file.is_file():
-            try:
-                base_prompt = prompt_file.read_text(encoding="utf-8")
-            except Exception:
-                pass
-
+        base_prompt = _read_system_prompt()
         if not base_prompt:
             base_prompt = (
                 "You are SYLEX AI Assistant — an elite University Curriculum Architect, Syllabus Intelligence Consultant, and Outcome-Based Education (OBE) Specialist.\n"
@@ -1233,7 +1270,7 @@ class Handler(BaseHTTPRequestHandler):
         # Call Cloud Provider
         try:
             if provider == "nvidia":
-                key = api_key or "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"
+                key = api_key or DEFAULT_NVIDIA_API_KEY
                 content, _, m_used = self._call_nvidia_nemotron(
                     system_prompt=system_prompt,
                     user_content=user_prompt,

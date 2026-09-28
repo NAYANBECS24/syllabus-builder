@@ -559,7 +559,7 @@ async function sendChat() {
 
   const onlineProvider = (document.getElementById('online-provider')?.value || savedSettings.provider || 'nvidia').toLowerCase();
   const onlineModel = (document.getElementById('online-model')?.value || savedSettings.model || 'nvidia/nemotron-3-super-120b-a12b').trim();
-  const onlineKey = (document.getElementById('online-key')?.value || savedSettings.key || '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').trim();
+  const onlineKey = (document.getElementById('online-key')?.value || savedSettings.key || '').trim();
   const onlineEndpoint = (document.getElementById('online-endpoint')?.value || savedSettings.endpoint || '').trim();
 
   // If Online Mode is active
@@ -598,8 +598,10 @@ async function sendChat() {
       console.warn('[Server Chat Proxy Note]', serverErr);
     }
 
-    // 2. Direct browser-to-cloud fallback (if server is offline or proxy failed)
-    if (onlineProvider === 'nvidia') {
+    // 2. Direct browser-to-cloud fallback (if server is offline or proxy failed).
+    // Only attempted when the user supplied their own key; a server-held key is
+    // never exposed to the browser.
+    if (onlineProvider === 'nvidia' && onlineKey) {
       try {
         const syllabusText = formatSyllabusContext(ctx);
         const systemPrompt = `You are SYLEX AI Assistant — University Curriculum Architect, Syllabus Intelligence Consultant, and OBE Specialist.
@@ -616,7 +618,7 @@ CRITICAL INSTRUCTIONS:
           method: 'POST',
           headers: {
             'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + (onlineKey || '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')
+            'Authorization': 'Bearer ' + onlineKey
           },
           body: JSON.stringify({
             model: onlineModel || 'nvidia/nemotron-3-super-120b-a12b',

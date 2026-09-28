@@ -300,10 +300,10 @@
       <div class="option-group">
         <label style="display:flex;justify-content:space-between">
           <span>API Key</span>
-          <span style="font-size:0.7rem;text-transform:none;color:var(--text-muted)">Stored securely in browser local storage</span>
+          <span style="font-size:0.7rem;text-transform:none;color:var(--text-muted)">Optional if the server has NVIDIA_API_KEY set</span>
         </label>
         <div style="display:flex;gap:8px">
-          <input type="password" id="online-key" class="text-input" value="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" placeholder="nvapi-... or sk-..." onchange="saveOnlineSettings()"/>
+          <input type="password" id="online-key" class="text-input" value="" placeholder="Leave blank to use the server key" onchange="saveOnlineSettings()"/>
           <button class="btn btn-sm btn-ghost" type="button" onclick="toggleKeyVisibility()" id="btn-toggle-key" style="white-space:nowrap">Show</button>
         </div>
       </div>

@@ -26,6 +26,11 @@ wheels/
 # Vercel
 .vercel
 
+# Secrets / environment
+.env
+.env.*
+!.env.example
+
 # Temporary / Scratch Files
 stderr.txt
 stdout.txt

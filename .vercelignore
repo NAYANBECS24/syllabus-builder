@@ -1,0 +1,19 @@
+# Local-only helpers and scratch files.
+# NOTE: do not ignore sylex.py, sylex_server.py or SYSTEM_PROMPT.md -
+# they are required inside the Python function bundles.
+
+run.py
+read_doc.ps1
+*.docx
+
+# Local environment / secrets
+.env
+.env.*
+!.env.example
+
+# OS / editor noise
+.DS_Store
+Thumbs.db
+desktop.ini
+__pycache__/
+*.py[cod]

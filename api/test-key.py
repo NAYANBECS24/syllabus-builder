@@ -2,6 +2,7 @@
 """Vercel Serverless Function: POST /api/test-key"""
 
 import json
+import os
 import time
 import sys
 import urllib.request
@@ -11,6 +12,8 @@ from http.server import BaseHTTPRequestHandler
 ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
+
+DEFAULT_NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "").strip()
 
 class handler(BaseHTTPRequestHandler):
     def do_OPTIONS(self):
@@ -43,7 +46,13 @@ class handler(BaseHTTPRequestHandler):
             t0 = time.time()
 
             if provider == "nvidia":
-                apiKey = key or "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"
+                apiKey = key or DEFAULT_NVIDIA_API_KEY
+                if not apiKey:
+                    self.send_json(
+                        {"error": "No NVIDIA API key configured. Set NVIDIA_API_KEY on the server or supply one in the request."},
+                        400,
+                    )
+                    return
                 base_url = endpoint.rstrip('/') if endpoint else "https://integrate.api.nvidia.com/v1"
                 req_model = model or "nvidia/nemotron-3-super-120b-a12b"
                 url = f"{base_url}/chat/completions"

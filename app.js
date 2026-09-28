@@ -150,14 +150,10 @@ window.setMode = setMode;
 function onProviderChange() {
   const p = $('online-provider')?.value || 'nvidia';
   const mInput = $('online-model');
-  const kInput = $('online-key');
   const epGroup = $('custom-endpoint-group');
   if (p === 'nvidia') {
     if (mInput && (!mInput.value || mInput.value === 'gemini-2.0-flash' || mInput.value === 'gpt-4o-mini' || mInput.value === 'llama3.2')) {
       mInput.value = 'nvidia/nemotron-3-super-120b-a12b';
-    }
-    if (kInput && !kInput.value) {
-      kInput.value = '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';
     }
     if (epGroup) epGroup.style.display = 'none';
   } else if (p === 'gemini') {
@@ -201,7 +197,7 @@ function saveOnlineSettings() {
   const settings = {
     provider: $('online-provider')?.value || 'nvidia',
     model: ($('online-model')?.value || 'nvidia/nemotron-3-super-120b-a12b').trim(),
-    key: ($('online-key')?.value || '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').trim(),
+    key: ($('online-key')?.value || '').trim(),
     endpoint: ($('online-endpoint')?.value || '').trim(),
     autofallback: $('online-autofallback')?.checked ?? true
   };
@@ -216,13 +212,13 @@ function loadOnlineSettings() {
     if (settings) {
       if ($('online-provider')) $('online-provider').value = settings.provider || 'nvidia';
       if ($('online-model')) $('online-model').value = settings.model || 'nvidia/nemotron-3-super-120b-a12b';
-      if ($('online-key')) $('online-key').value = settings.key || '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';
+      if ($('online-key')) $('online-key').value = settings.key || '';
       if ($('online-endpoint')) $('online-endpoint').value = settings.endpoint || '';
       if ($('online-autofallback')) $('online-autofallback').checked = settings.autofallback ?? true;
     } else {
       if ($('online-provider')) $('online-provider').value = 'nvidia';
       if ($('online-model')) $('online-model').value = 'nvidia/nemotron-3-super-120b-a12b';
-      if ($('online-key')) $('online-key').value = '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';
+      if ($('online-key')) $('online-key').value = '';
     }
   } catch (_) {}
   const savedMode = localStorage.getItem('sylex_mode') || 'online';
@@ -233,12 +229,12 @@ function loadOnlineSettings() {
 async function testOnlineKey() {
   const provider = $('online-provider')?.value || 'nvidia';
   const model = ($('online-model')?.value || 'nvidia/nemotron-3-super-120b-a12b').trim();
-  const key = ($('online-key')?.value || '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').trim();
+  const key = ($('online-key')?.value || '').trim();
   const endpoint = ($('online-endpoint')?.value || '').trim();
   const statusMsg = $('key-status-msg');
   const btn = $('btn-test-key');
 
-  if (!key && provider !== 'custom') {
+  if (!key && provider === 'gemini') {
     if (statusMsg) { statusMsg.style.color = 'var(--accent-amber)'; statusMsg.textContent = '⚠️ Enter an API key first'; }
     toast('Enter an API key first', 'error');
     return;
