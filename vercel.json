@@ -5,7 +5,7 @@
   "functions": {
     "api/*.py": {
       "maxDuration": 60,
-      "includeFiles": "{sylex.py,SYSTEM_PROMPT.md}"
+      "includeFiles": "{sylex.py,sylex_server.py,SYSTEM_PROMPT.md}"
     }
   }
 }

@@ -176,8 +176,13 @@ window.setMode = setMode;
 
 function loadOnlineSettings() {
   const selector = $('cloud-model-select');
-  const savedModel = localStorage.getItem('sylex_cloud_model');
-  if (selector && savedModel && [...selector.options].some(option => option.value === savedModel)) {
+  let savedModel = localStorage.getItem('sylex_cloud_model');
+  const available = selector ? [...selector.options].map(o => o.value) : [];
+  if (savedModel && (!available.includes(savedModel) || savedModel.includes('nemotron'))) {
+    savedModel = SYLEX_NVIDIA_MODEL;
+    localStorage.setItem('sylex_cloud_model', savedModel);
+  }
+  if (selector && savedModel && available.includes(savedModel)) {
     selector.value = savedModel;
   }
   const savedMode = localStorage.getItem('sylex_mode') || 'online';
@@ -936,7 +941,7 @@ function renderAIReasoning() {
   if (reasoning && reasoning.trim()) {
     card.style.display = 'block';
     content.textContent = reasoning;
-    if (badge) badge.textContent = `NVIDIA Nemotron 550B · Active Reasoning (${reasoning.length} chars)`;
+    if (badge) badge.textContent = `NVIDIA Cloud AI · Active Reasoning (${reasoning.length} chars)`;
   } else {
     card.style.display = 'none';
   }

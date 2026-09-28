@@ -464,7 +464,7 @@ function updateChatModeUI(mode) {
   const provider = 'NVIDIA';
   const model = typeof window.getSylexCloudModel === 'function'
     ? window.getSylexCloudModel()
-    : (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b');
+    : (localStorage.getItem('sylex_cloud_model') || (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'z-ai/glm-5.3'));
 
   if (btnOn) btnOn.classList.toggle('active', isOnline);
   if (btnOff) btnOff.classList.toggle('active', !isOnline);
@@ -481,7 +481,7 @@ function updateChatModeUI(mode) {
 
   if (modeSub) {
     if (isOnline) {
-      const cleanModel = model.replace('nvidia/', '').replace('-instruct', '');
+      const cleanModel = model.replace('nvidia/', '').replace('z-ai/', '').replace('-instruct', '');
       modeSub.textContent = `🌐 ${provider} · ${cleanModel} · OBE Curriculum Advisor & Exam Engine`;
     } else {
       modeSub.textContent = '⚡ Offline Engine · Deterministic Syllabus Rules & Invariants';
@@ -546,23 +546,26 @@ async function sendChat() {
   };
 
   const savedMode = localStorage.getItem('sylex_mode') || window.STATE?.extractionMode || 'online';
+  const isOnline = (savedMode === 'online');
+
+  const isLocalHost = typeof window !== 'undefined' && 
+    (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
   const defaultServerUrl = (typeof window !== 'undefined' && window.location.origin && window.location.origin !== 'null')
-    ? (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1' 
-        ? (window.location.port === '7823' ? window.location.origin : 'http://localhost:7823')
-        : window.location.origin)
+    ? (isLocalHost && window.location.port !== '7823' && window.location.port !== '' ? 'http://localhost:7823' : window.location.origin)
     : 'http://localhost:7823';
-  const serverUrl = (window.STATE?.serverUrl || defaultServerUrl).replace(/\/+$/, '');
+  const serverUrl = (!isLocalHost && typeof window !== 'undefined' && window.location.origin)
+    ? window.location.origin
+    : (window.STATE?.serverUrl || defaultServerUrl).replace(/\/+$/, '');
 
   const onlineProvider = 'nvidia';
   const onlineModel = typeof window.getSylexCloudModel === 'function'
     ? window.getSylexCloudModel()
-    : (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'nvidia/nemotron-3-super-120b-a12b');
+    : (localStorage.getItem('sylex_cloud_model') || (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'z-ai/glm-5.3'));
   const onlineKey = '';
   const onlineEndpoint = '';
 
-  // If Online Mode is active
+  // If Online Mode is active, query server /api/chat
   if (isOnline) {
-    // 1. Try local server proxy endpoint (/api/chat)
     try {
       const payload = {
         message: msg,
@@ -578,7 +581,7 @@ async function sendChat() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(35000)
+        signal: AbortSignal.timeout(30000)
       });
 
       if (resp.ok) {
@@ -591,69 +594,29 @@ async function sendChat() {
           });
           return;
         }
+      } else {
+        console.warn(`[Chat Proxy] Server returned HTTP ${resp.status}`);
       }
     } catch (serverErr) {
       console.warn('[Server Chat Proxy Note]', serverErr);
     }
-
-    // 2. Direct browser-to-cloud fallback (if server is offline or proxy failed)
-    if (onlineProvider === 'nvidia' && onlineKey) {
-      try {
-        const syllabusText = formatSyllabusContext(ctx);
-        const systemPrompt = `You are SYLEX AI Assistant — University Curriculum Architect, Syllabus Intelligence Consultant, and OBE Specialist.
-=== CURRENT COURSE SYLLABUS ===
-${syllabusText}
-===============================
-CRITICAL INSTRUCTIONS:
-1. Whatever question the user asks (concepts, definitions, comparisons, code examples, algorithm mechanics, exam questions, lesson plans, Bloom taxonomy analysis, or practical applications), DIRECTLY, THOROUGHLY, AND AUTHORITATIVELY ANSWER IT.
-2. Ground your explanations explicitly in the syllabus course, units, topics, and Bloom's taxonomy levels (K1 to K6).
-3. Provide pedagogical explanations, step-by-step logic, code snippets (C/C++/Python/Java) where applicable, and real-world examples.
-4. Conclude with 2-3 follow-up suggestions under '💡 **Next Suggestions:**'.`;
-
-        const directResp = await fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'Authorization': 'Bearer ' + onlineKey
-          },
-          body: JSON.stringify({
-            model: onlineModel || 'nvidia/nemotron-3-super-120b-a12b',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: msg }
-            ],
-            max_tokens: 2048,
-            temperature: 0.7,
-            chat_template_kwargs: { enable_thinking: true }
-          }),
-          signal: AbortSignal.timeout(28000)
-        });
-
-        if (directResp.ok) {
-          const directData = await directResp.json();
-          const directContent = directData.choices?.[0]?.message?.content;
-          if (directContent) {
-            removeTyping();
-            appendMsg(renderMarkdown(directContent), 'assistant', true, {
-              model: onlineModel || 'nvidia/nemotron-3-super-120b-a12b',
-              provider: 'nvidia'
-            });
-            return;
-          }
-        }
-      } catch (directErr) {
-        console.warn('[Direct Cloud AI Call Note]', directErr);
-      }
-    }
   }
 
-  // 3. Deterministic Local Offline Fallback
+  // Fallback to Deterministic Local Offline Engine
   removeTyping();
-  const localReply = respond(msg);
-  appendMsg(renderMarkdown(localReply), 'assistant', true, {
-    model: 'local-offline-engine',
-    provider: 'local'
-  });
+  try {
+    const localReply = respond(msg);
+    appendMsg(renderMarkdown(localReply), 'assistant', true, {
+      model: 'local-offline-engine',
+      provider: 'local'
+    });
+  } catch (offlineErr) {
+    console.error('[Chat Offline Fallback Error]', offlineErr);
+    appendMsg('I encountered an issue processing your query against the syllabus context. Please try asking again or rephrase your question.', 'assistant', false, {
+      model: 'local-offline-engine',
+      provider: 'local'
+    });
+  }
 }
 
 function sendQuick(msg) {

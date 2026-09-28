@@ -821,13 +821,15 @@ class Handler(BaseHTTPRequestHandler):
                 "No NVIDIA API key available. Set the NVIDIA_API_KEY environment "
                 "variable on the server, or supply one in the request."
             )
-        requested_model = model if model and model not in ("gemini-2.0-flash", "gpt-4o-mini", "llama3.2") else "z-ai/glm-5.3"
+        requested_model = (model or "").strip()
+        if not requested_model or requested_model in ("gemini-2.0-flash", "gpt-4o-mini", "llama3.2"):
+            requested_model = "z-ai/glm-5.3"
 
         candidate_models = [
             requested_model,
-            "nvidia/nemotron-3-super-120b-a12b",
-            "nvidia/nemotron-3-ultra-550b-a55b",
-            "nvidia/nemotron-3.5-lightning-30b-a3b",
+            "z-ai/glm-5.3",
+            "meta/llama-3.2-11b-vision-instruct",
+            "openai/gpt-oss-20b",
         ]
         seen = set()
         models = [m for m in candidate_models if m and not (m in seen or seen.add(m))]
@@ -1274,7 +1276,7 @@ class Handler(BaseHTTPRequestHandler):
             "5. NEXT SUGGESTIONS: Always conclude your response with 2 to 3 concise, highly relevant next question suggestions under a '💡 **Next Suggestions:**' section."
         )
 
-        actual_model = model or ("nvidia/nemotron-3-super-120b-a12b" if provider == "nvidia" else "gemini-2.0-flash")
+        actual_model = model or ("z-ai/glm-5.3" if provider == "nvidia" else "gemini-2.0-flash")
 
         # Format user prompt with context if history is present
         user_prompt = user_message
@@ -1295,7 +1297,7 @@ class Handler(BaseHTTPRequestHandler):
                     endpoint=endpoint,
                     temperature=0.7,
                     max_tokens=2048,
-                    timeout=25.0
+                    timeout=18.0
                 )
                 if content and content.strip():
                     return content.strip(), m_used
