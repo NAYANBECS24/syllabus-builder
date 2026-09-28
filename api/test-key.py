@@ -13,6 +13,21 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 if str(ROOT_DIR) not in sys.path:
     sys.path.insert(0, str(ROOT_DIR))
 
+def _load_local_env():
+    """Load local secrets without affecting Vercel's managed environment."""
+    env_file = ROOT_DIR / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if not line or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        if name and name not in os.environ:
+            os.environ[name] = value.strip().strip('"').strip("'")
+
+_load_local_env()
+
 DEFAULT_NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "").strip()
 
 class handler(BaseHTTPRequestHandler):
@@ -54,36 +69,27 @@ class handler(BaseHTTPRequestHandler):
                     )
                     return
                 base_url = endpoint.rstrip('/') if endpoint else "https://integrate.api.nvidia.com/v1"
-                req_model = model or "nvidia/nemotron-3-super-120b-a12b"
-                url = f"{base_url}/chat/completions"
-                payload = {
-                    "model": req_model,
-                    "messages": [
-                        {"role": "system", "content": "You are a helpful assistant. Reply concisely."},
-                        {"role": "user", "content": "Ping: confirm system status."}
-                    ],
-                    "max_tokens": 64,
-                    "temperature": 0.2
-                }
+                req_model = model or "z-ai/glm-5.3"
+                url = f"{base_url}/models"
                 req = urllib.request.Request(
                     url,
-                    data=json.dumps(payload).encode("utf-8"),
                     headers={
-                        "Content-Type": "application/json",
                         "Authorization": f"Bearer {apiKey}"
                     },
-                    method="POST"
+                    method="GET"
                 )
                 with urllib.request.urlopen(req, timeout=10) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
-                    content = data["choices"][0]["message"].get("content", "")
+                    available_models = {item.get("id") for item in data.get("data", [])}
+                    if req_model not in available_models:
+                        self.send_json({"error": f"Configured model is not available: {req_model}"}, 400)
+                        return
                     elapsed = int((time.time() - t0) * 1000)
                     self.send_json({
                         "status": "ok",
                         "provider": "nvidia",
                         "model": req_model,
-                        "latency_ms": elapsed,
-                        "content": content.strip()
+                        "latency_ms": elapsed
                     })
                     return
 

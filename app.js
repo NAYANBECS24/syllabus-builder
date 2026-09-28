@@ -4,7 +4,7 @@ const isLocal = typeof window !== 'undefined' &&
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
 // ── Provider defaults ────────────────────────────────────────────────
-const SYLEX_NVIDIA_MODEL = 'nvidia/nemotron-3-super-120b-a12b';
+const SYLEX_NVIDIA_MODEL = 'z-ai/glm-5.3';
 const SYLEX_CLOUD_PROVIDER = 'nvidia';
 const SYLEX_CLOUD_AUTOFALLBACK = true;
 if (typeof window !== 'undefined') {

@@ -21,6 +21,21 @@ PORT      = 7823
 BASE_DIR  = Path(__file__).parent
 SYLEX_PY  = BASE_DIR / "sylex.py"
 
+def _load_local_env():
+    """Load local secrets without affecting Vercel's managed environment."""
+    env_file = BASE_DIR / ".env"
+    if not env_file.is_file():
+        return
+    for line in env_file.read_text(encoding="utf-8").splitlines():
+        if not line or line.lstrip().startswith("#") or "=" not in line:
+            continue
+        name, value = line.split("=", 1)
+        name = name.strip()
+        if name and name not in os.environ:
+            os.environ[name] = value.strip().strip('"').strip("'")
+
+_load_local_env()
+
 # Server-side fallback credential. Configure NVIDIA_API_KEY in Vercel project
 # settings (or a local .env). Request-supplied keys take precedence.
 DEFAULT_NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "").strip()
@@ -422,7 +437,7 @@ class Handler(BaseHTTPRequestHandler):
                     content, reasoning, m_used = self._call_nvidia_nemotron(
                         system_prompt="You are a helpful AI assistant. Answer concisely in one sentence.",
                         user_content="Write a 1-sentence verification that GPU computing is active.",
-                        model=model or "nvidia/nemotron-3-super-120b-a12b",
+                        model=model or "z-ai/glm-5.3",
                         api_key=key or DEFAULT_NVIDIA_API_KEY,
                         endpoint=endpoint,
                         max_tokens=256,
@@ -806,7 +821,7 @@ class Handler(BaseHTTPRequestHandler):
                 "No NVIDIA API key available. Set the NVIDIA_API_KEY environment "
                 "variable on the server, or supply one in the request."
             )
-        requested_model = model if model and model not in ("gemini-2.0-flash", "gpt-4o-mini", "llama3.2") else "nvidia/nemotron-3-super-120b-a12b"
+        requested_model = model if model and model not in ("gemini-2.0-flash", "gpt-4o-mini", "llama3.2") else "z-ai/glm-5.3"
 
         candidate_models = [
             requested_model,
@@ -865,7 +880,7 @@ class Handler(BaseHTTPRequestHandler):
         debug_flag  = False
         mode        = "offline"
         provider    = "nvidia"
-        model       = "nvidia/nemotron-3-super-120b-a12b"
+        model       = "z-ai/glm-5.3"
         api_key     = DEFAULT_NVIDIA_API_KEY
         endpoint    = ""
 
