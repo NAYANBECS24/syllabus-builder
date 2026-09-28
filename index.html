@@ -1,0 +1,879 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>SYLEX v3.0 — Autonomous Syllabus Extraction &amp; Curriculum Verification Engine</title>
+  <meta name="description" content="Offline-capable autonomous syllabus PDF parser and OBE curriculum verification system conforming to the 21 September 2026 specification."/>
+  <link rel="stylesheet" href="styles.css"/>
+  <link rel="stylesheet" href="chat.css"/>
+</head>
+<body>
+<div class="bg-aurora" aria-hidden="true"><div class="aurora-mid"></div></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<div id="app">
+
+<!-- ══ NAVBAR ══ -->
+<nav class="navbar" role="navigation" aria-label="Main Navigation">
+  <a class="nav-brand" href="#" onclick="navigate('home');return false">
+    <div class="omega">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+        <path d="M6 6h10"/>
+        <path d="M6 10h10"/>
+        <path d="M6 14h6"/>
+      </svg>
+    </div>
+    <div>
+      <div class="name">SYLEX <span style="font-weight:400;font-size:0.75rem;color:var(--text-muted);margin-left:4px">v3.0</span></div>
+      <div class="version">Curriculum Extraction &amp; Verification System</div>
+    </div>
+  </a>
+
+  <div class="nav-links" role="menubar">
+    <button class="nav-link active" data-nav="home">Overview</button>
+    <button class="nav-link" data-nav="extract">Extract</button>
+    <button class="nav-link" data-nav="results">Results Explorer</button>
+    <button class="nav-link" data-nav="chat">OBE Assistant</button>
+    <button class="nav-link" data-nav="settings">Settings</button>
+  </div>
+
+  <div style="display:flex;gap:8px;align-items:center">
+    <div id="mode-badge" class="mode-nav-badge offline">
+      <span class="dot"></span>
+      <span id="mode-nav-label">Deterministic Local</span>
+    </div>
+    <div id="server-badge" class="nav-badge offline">
+      <span class="dot"></span>
+      <span id="server-label">Server Offline</span>
+    </div>
+  </div>
+</nav>
+
+<!-- ══════════════════════ HOME / OVERVIEW ══════════════════════ -->
+<section id="section-home" class="section active">
+<div class="hero">
+  <div class="hero-eyebrow">21 September 2026 Evaluation Standard · Pure Deterministic Core</div>
+  <h1 class="hero-title">
+    Autonomous Syllabus Extraction<br/>
+    <span class="omega-word">&amp; Curriculum Verification</span>
+  </h1>
+  <p class="hero-sub">
+    Industrial-strength document reconstruction for complex university syllabi.
+    Discovers document grammar at runtime, parses course boundaries, topics, Bloom taxonomy levels,
+    and CO-PO articulation matrices word-for-word into verifiable JSON schemas with zero hallucinations.
+  </p>
+
+  <div class="hero-cta">
+    <button class="btn btn-primary" onclick="navigate('extract')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+        <polyline points="17 8 12 3 7 8"/>
+        <line x1="12" y1="3" x2="12" y2="15"/>
+      </svg>
+      Extract Syllabus PDF
+    </button>
+    <button class="btn btn-secondary" onclick="loadDemo()">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polygon points="5 3 19 12 5 21 5 3"/>
+      </svg>
+      Inspect Reference Benchmark
+    </button>
+    <button class="btn btn-ghost" onclick="navigate('chat')">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+      </svg>
+      Curriculum Advisor
+    </button>
+  </div>
+
+  <!-- Pipeline architecture strip -->
+  <div style="margin:2.5rem auto 0;max-width:820px;padding:12px 18px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-family:var(--font-mono);font-size:0.75rem">
+    <span style="color:var(--text-muted);font-weight:600">PIPELINE:</span>
+    <span style="color:var(--text-secondary)">Triage</span>
+    <span style="color:var(--border-mid)">→</span>
+    <span style="color:var(--accent-blue)">Grammar Induction</span>
+    <span style="color:var(--border-mid)">→</span>
+    <span style="color:var(--accent-cyan)">Segmentation</span>
+    <span style="color:var(--border-mid)">→</span>
+    <span style="color:var(--accent-green)">Deep Extract</span>
+    <span style="color:var(--border-mid)">→</span>
+    <span style="color:var(--accent-amber)">Consensus Gate</span>
+    <span style="color:var(--border-mid)">→</span>
+    <span style="color:var(--text-primary);font-weight:600">JSON Schema</span>
+  </div>
+
+  <!-- Feature grid -->
+  <div class="hero-features" style="margin-top:2.5rem">
+    <div class="hero-feature-card">
+      <div class="feature-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <circle cx="12" cy="12" r="3"/>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+        </svg>
+      </div>
+      <div class="feature-title">Document Grammar Induction</div>
+      <div class="feature-desc">Learns layout typography, unit keywords, code styles, and matrix symbol sets at runtime directly from document structure.</div>
+    </div>
+
+    <div class="hero-feature-card">
+      <div class="feature-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="4 7 4 4 20 4 20 7"/>
+          <line x1="9" y1="20" x2="15" y2="20"/>
+          <line x1="12" y1="4" x2="12" y2="20"/>
+        </svg>
+      </div>
+      <div class="feature-title">Lossless Topic Segmentation</div>
+      <div class="feature-desc">Hierarchical 7-strategy delimiter cascade with closed-world source reconstruction invariants for 100% complete coverage.</div>
+    </div>
+
+    <div class="hero-feature-card">
+      <div class="feature-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 2v20"/>
+          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
+        </svg>
+      </div>
+      <div class="feature-title">Bloom Cognitive Taxonomy</div>
+      <div class="feature-desc">Extracts explicit printed markers (K1–K6, BT1–BT6) as printed, backed by a 40+ cognitive action-verb classifier.</div>
+    </div>
+
+    <div class="hero-feature-card">
+      <div class="feature-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
+          <line x1="3" y1="9" x2="21" y2="9"/>
+          <line x1="3" y1="15" x2="21" y2="15"/>
+          <line x1="9" y1="3" x2="9" y2="21"/>
+          <line x1="15" y1="3" x2="15" y2="21"/>
+        </svg>
+      </div>
+      <div class="feature-title">CO-PO Matrix Alignment</div>
+      <div class="feature-desc">Dual-backend table fusion stitches multi-page matrices, aligns PO headers, and preserves source symbols (S/M/L, 1/2/3).</div>
+    </div>
+
+    <div class="hero-feature-card">
+      <div class="feature-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
+        </svg>
+      </div>
+      <div class="feature-title">Grounded Bibliographic Parser</div>
+      <div class="feature-desc">Right-to-left slot decomposition isolates title, author, edition, publisher, and publication year without hallucinations.</div>
+    </div>
+
+    <div class="hero-feature-card">
+      <div class="feature-icon">
+        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
+      </div>
+      <div class="feature-title">Honest not_extracted Ledger</div>
+      <div class="feature-desc">Auditable accounting of absent or unresolvable document regions to guarantee that evaluated outputs never fabricate data.</div>
+    </div>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════ EXTRACT ══════════════════════ -->
+<section id="section-extract" class="section">
+<div style="max-width:880px;margin:0 auto;padding:3rem 2rem">
+  <div class="upload-header">
+    <h1 class="section-title">Document Ingestion &amp; Extraction</h1>
+    <p class="section-sub">Upload any academic syllabus PDF for evaluation-compliant parsing.</p>
+  </div>
+
+  <!-- Server status bar -->
+  <div id="server-status-bar" class="server-bar offline">
+    <span id="server-status-icon">●</span>
+    <span id="server-status-text">Local server offline — using browser demo sandbox</span>
+    <button class="btn btn-sm btn-ghost" onclick="checkServer()">Check Server</button>
+  </div>
+
+  <!-- Drag & Drop Zone -->
+  <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Upload PDF Area">
+    <div class="drop-icon">
+      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+        <line x1="12" y1="18" x2="12" y2="12"/>
+        <line x1="9" y1="15" x2="15" y2="15"/>
+      </svg>
+    </div>
+    <div class="drop-title">Select or drag &amp; drop syllabus PDF</div>
+    <div class="drop-sub">Accepts vector-native, complex multi-column, and tabular PDFs</div>
+    <div class="drop-formats">
+      <span class="format-tag">.pdf</span>
+      <span class="format-tag">PyMuPDF Native</span>
+      <span class="format-tag">pdfplumber Fusion</span>
+    </div>
+    <input type="file" id="file-input" accept=".pdf" style="display:none"/>
+  </div>
+
+  <!-- Selected file badge -->
+  <div id="file-chosen" class="file-chosen">
+    <div class="file-icon-chosen">
+      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+        <polyline points="14 2 14 8 20 8"/>
+      </svg>
+    </div>
+    <div class="file-info">
+      <div class="file-name" id="chosen-name"></div>
+      <div class="file-size mono" id="chosen-size"></div>
+    </div>
+    <button class="btn btn-sm btn-ghost" id="btn-remove-file">Remove</button>
+  </div>
+
+  <!-- Mode Selector -->
+  <div style="margin-top:2rem">
+    <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-secondary);margin-bottom:0.75rem">
+      Engine Execution Mode
+    </div>
+    <div class="mode-cards-grid">
+      <div class="mode-card active" id="mode-card-offline" onclick="setMode('offline')">
+        <div class="mode-card-header">
+          <div class="mode-badge-icon offline">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/>
+              <line x1="8" y1="21" x2="16" y2="21"/>
+              <line x1="12" y1="17" x2="12" y2="21"/>
+            </svg>
+          </div>
+          <div class="mode-radio"><span class="radio-dot"></span></div>
+        </div>
+        <div class="mode-card-title">Deterministic Engine (Local Rules)</div>
+        <div class="mode-card-desc">100% offline, zero external calls, exact schema compliance. Primary evaluated standard.</div>
+        <div class="mode-card-features">
+          <span class="m-feat">Deterministic Replay</span>
+          <span class="m-feat">Clean Machine Ready</span>
+        </div>
+      </div>
+
+      <div class="mode-card online-mode" id="mode-card-online" onclick="setMode('online')">
+        <div class="mode-card-header">
+          <div class="mode-badge-icon online">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="2" y1="12" x2="22" y2="12"/>
+              <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"/>
+            </svg>
+          </div>
+          <div class="mode-radio"><span class="radio-dot"></span></div>
+        </div>
+        <div class="mode-card-title">Cloud AI Accelerated (Multimodal LLM)</div>
+        <div class="mode-card-desc">Deep semantic tie-breaking via NVIDIA Nemotron / Gemini / OpenAI with automatic offline fallback.</div>
+        <div class="mode-card-features">
+          <span class="m-feat">Semantic Disambiguation</span>
+          <span class="m-feat">Auto-Fallback Protected</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Online Cloud AI Drawer -->
+  <div id="online-config-drawer" style="display:none;margin-top:1.25rem;padding:1.25rem;background:var(--bg-elevated);border:1px solid var(--border-accent);border-radius:var(--radius-md)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
+      <div style="font-weight:700;color:var(--text-accent);font-size:0.88rem;display:flex;align-items:center;gap:6px">
+        <span>Cloud Model Configuration</span>
+      </div>
+      <button class="btn btn-sm btn-ghost" type="button" onclick="testOnlineKey()" id="btn-test-key">Test Connection</button>
+    </div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:1rem">
+      <div class="option-group">
+        <label>AI Provider</label>
+        <select id="online-provider" class="select-input" onchange="onProviderChange()">
+          <option value="nvidia" selected>NVIDIA NIM (Nemotron 3 Super 120B / Ultra 550B)</option>
+          <option value="gemini">Google Gemini (Gemini 2.0 / 1.5 Pro)</option>
+          <option value="openai">OpenAI (GPT-4o / GPT-4o-mini)</option>
+          <option value="custom">Custom / Local LLM (Ollama, vLLM)</option>
+        </select>
+      </div>
+      <div class="option-group">
+        <label>Model ID</label>
+        <input type="text" id="online-model" class="text-input" value="nvidia/nemotron-3-super-120b-a12b" placeholder="e.g. nvidia/nemotron-3-super-120b-a12b" onchange="saveOnlineSettings()"/>
+      </div>
+    </div>
+    <div style="margin-top:1rem">
+      <div class="option-group">
+        <label style="display:flex;justify-content:space-between">
+          <span>API Key</span>
+          <span style="font-size:0.7rem;text-transform:none;color:var(--text-muted)">Stored securely in browser local storage</span>
+        </label>
+        <div style="display:flex;gap:8px">
+          <input type="password" id="online-key" class="text-input" value="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" placeholder="nvapi-... or sk-..." onchange="saveOnlineSettings()"/>
+          <button class="btn btn-sm btn-ghost" type="button" onclick="toggleKeyVisibility()" id="btn-toggle-key" style="white-space:nowrap">Show</button>
+        </div>
+      </div>
+    </div>
+    <div id="custom-endpoint-group" style="display:none;margin-top:1rem">
+      <div class="option-group">
+        <label>Custom Endpoint URL</label>
+        <input type="text" id="online-endpoint" class="text-input" placeholder="http://localhost:11434/v1" onchange="saveOnlineSettings()"/>
+      </div>
+    </div>
+    <div style="margin-top:1rem;display:flex;justify-content:space-between;align-items:center;font-size:0.8rem;color:var(--text-secondary);flex-wrap:wrap;gap:8px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer">
+        <input type="checkbox" id="online-autofallback" checked onchange="saveOnlineSettings()"/>
+        <span>Auto-fallback to Deterministic Local Engine on timeout or rate limit</span>
+      </label>
+      <span id="key-status-msg" style="font-size:0.75rem;font-weight:600"></span>
+    </div>
+  </div>
+
+  <!-- Options Grid -->
+  <div class="options-grid" style="margin-top:1.5rem">
+    <div class="option-group">
+      <label>Evaluation Task</label>
+      <select id="task-select" class="select-input">
+        <option value="1">Task 1 — Course Inventory &amp; Mapping</option>
+        <option value="2">Task 2 — Deep Course Extraction</option>
+      </select>
+    </div>
+    <div class="option-group">
+      <label>Target Course Identifier (Task 2)</label>
+      <input type="text" id="course-input" class="text-input" placeholder="e.g. CS23301 or DATA STRUCTURES"/>
+    </div>
+    <div class="option-group">
+      <label>Hints Override File (Optional)</label>
+      <input type="file" id="hints-input" accept=".json" class="text-input" style="padding:8px"/>
+    </div>
+  </div>
+
+  <!-- Advanced options -->
+  <div style="margin-top:1rem">
+    <button class="btn btn-sm btn-ghost" onclick="toggleAdvanced()" id="adv-toggle">
+      ⚙ Advanced Diagnostics
+    </button>
+    <div id="adv-panel" style="display:none;margin-top:0.75rem;padding:1rem;background:var(--bg-glass);border:1px solid var(--border-subtle);border-radius:var(--radius-md)">
+      <div class="toggle-row">
+        <span style="font-size:0.82rem;color:var(--text-secondary)">Include _debug diagnostic metadata in output</span>
+        <button class="toggle" id="debug-toggle" onclick="this.classList.toggle('on')"></button>
+      </div>
+      <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-muted);font-family:var(--font-mono)">
+        Hints schema: {"courses": [{"code": "CS23301", "title": "DATA STRUCTURES", "page": 41}]}
+      </div>
+    </div>
+  </div>
+
+  <!-- Run Button -->
+  <div class="run-area">
+    <button id="btn-run" class="btn-run" disabled>Execute Extraction</button>
+  </div>
+
+  <!-- Progress bar -->
+  <div id="extract-progress" style="display:none;margin-top:1.5rem">
+    <div class="pipeline-progress-bar"><div class="pipeline-progress-fill" id="prog-fill" style="width:0%"></div></div>
+    <div id="prog-label" style="text-align:center;color:var(--text-secondary);font-size:0.82rem;margin-top:0.5rem">Initializing pipeline...</div>
+  </div>
+
+  <!-- CLI Command Reference -->
+  <div style="margin-top:2.5rem;padding:1.5rem;background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-lg)">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
+      <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted)">Evaluation CLI Commands (Direct Terminal Execution)</div>
+      <span style="font-size:0.7rem;color:var(--accent-green);font-family:var(--font-mono)">Exit 0 = Valid JSON</span>
+    </div>
+    <pre class="cli-block"># Task 1 — Course count and catalog
+python sylex.py --pdf syllabus.pdf
+
+# Task 2 — Deep extraction for one course
+python sylex.py --pdf syllabus.pdf --course CS23301
+
+# Write JSON output directly to file
+python sylex.py --pdf syllabus.pdf --course CS23301 --out task2_result.json
+
+# Launch Local Web UI
+python run.py</pre>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════ RESULTS EXPLORER ══════════════════════ -->
+<section id="section-results" class="section">
+<div style="max-width:1400px;margin:0 auto;padding:2rem">
+
+  <!-- Stats KPI Banner -->
+  <div class="stats-banner" id="stats-banner"></div>
+
+  <!-- AI Reasoning Card -->
+  <div id="ai-thinking-card" style="display:none;margin-bottom:1.5rem;background:var(--bg-elevated);border:1px solid var(--border-accent);border-radius:var(--radius-md);overflow:hidden">
+    <details class="ai-thought-details" open style="padding:1rem 1.25rem">
+      <summary style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;list-style:none">
+        <div style="display:flex;align-items:center;gap:10px">
+          <span style="font-weight:700;color:var(--text-accent);font-size:0.88rem">Multimodal Cognitive Reasoning Trace</span>
+          <span class="m-feat" id="ai-latency-badge" style="font-size:0.7rem">Cognitive Flow</span>
+        </div>
+        <span style="font-size:0.75rem;color:var(--text-muted)">Toggle trace</span>
+      </summary>
+      <div style="margin-top:0.85rem;padding:0.85rem 1rem;background:var(--bg-base);border-radius:var(--radius-sm);border:1px solid var(--border-subtle);font-family:var(--font-mono);font-size:0.78rem;color:var(--text-secondary);line-height:1.6;white-space:pre-wrap;max-height:260px;overflow-y:auto" id="ai-thinking-content"></div>
+    </details>
+  </div>
+
+  <!-- Primary Results Tabs -->
+  <div class="results-tabs" role="tablist">
+    <button class="results-tab active" data-tab="courses">Courses Catalog (Task 1)</button>
+    <button class="results-tab" data-tab="deep">Course Inspector (Task 2)</button>
+    <button class="results-tab" data-tab="audit">Curriculum Audit &amp; OBE</button>
+    <button class="results-tab" data-tab="json1">Task 1 JSON</button>
+    <button class="results-tab" data-tab="json2">Task 2 JSON</button>
+    <button class="results-tab" data-tab="bloom">Bloom Analytics</button>
+    <button class="results-tab" data-tab="ledger">not_extracted Ledger</button>
+  </div>
+
+  <!-- Courses Tab (Task 1) -->
+  <div id="tab-courses" class="tab-content active">
+    <div class="tab-toolbar">
+      <span id="t1-summary" style="color:var(--text-secondary);font-size:0.85rem"></span>
+      <div style="display:flex;gap:8px">
+        <button class="btn btn-sm btn-ghost" onclick="exportCoursesCSV()">Export CSV</button>
+        <button class="btn btn-sm btn-ghost" onclick="copyJSON('json-t1-pre')">Copy JSON</button>
+        <button class="btn btn-sm btn-ghost" onclick="downloadResult(1)">Download</button>
+      </div>
+    </div>
+    <div style="margin: 0.75rem 0 1rem; display: flex; gap: 12px; align-items: center; flex-wrap: wrap;">
+      <input type="text" id="course-filter-input" class="text-input" placeholder="Search catalog by code or title..." style="max-width:340px;padding:8px 12px;font-size:0.85rem" oninput="renderCourseCards(this.value)"/>
+      <span style="font-size:0.75rem;color:var(--text-muted)">Click any card to inspect full units, outcomes, matrix, and bibliography.</span>
+    </div>
+    <div id="courses-grid" class="task1-grid"></div>
+  </div>
+
+  <!-- Deep View Tab (Task 2) -->
+  <div id="tab-deep" class="tab-content">
+    <div class="tab-toolbar" style="margin-bottom:1rem;background:var(--bg-elevated);padding:8px 14px;border-radius:var(--radius-sm);border:1px solid var(--border-subtle)">
+      <span style="font-size:0.8rem;color:var(--text-secondary);display:flex;align-items:center;gap:6px">
+        <span>Verified Course Inspector</span>
+      </span>
+      <div style="display:flex;gap:8px;flex-wrap:wrap">
+        <button class="btn btn-sm btn-ghost" onclick="openDossierModal()" title="Export complete NBA/NAAC Course Dossier file">📑 Course Dossier</button>
+        <button class="btn btn-sm btn-ghost" onclick="openHintsStudio()" title="Interactive visual boundaries override tool">⚙️ Hints Studio</button>
+        <button class="btn btn-sm btn-ghost" onclick="copyMarkdownSyllabus()" title="Copy entire course syllabus in Markdown format">Copy Markdown</button>
+        <button class="btn btn-sm btn-ghost" onclick="exportMatrixCSV()" title="Export CO-PO Articulation Matrix as CSV for Accreditation">Export Matrix CSV</button>
+        <button class="btn btn-sm btn-ghost" onclick="printSyllabus()" title="Clean print layout or save to PDF">Print / PDF</button>
+        <button class="btn btn-sm btn-ghost" onclick="downloadResult(2)">Download JSON</button>
+      </div>
+    </div>
+    <div class="task2-layout">
+      <div class="course-meta-card" id="meta-card">
+        <div style="text-align:center;color:var(--text-muted);font-size:0.85rem;padding:2rem">
+          Select a course from Task 1 Catalog to inspect its details here.
+        </div>
+      </div>
+      <div>
+        <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:1px solid var(--border-subtle);flex-wrap:wrap">
+          <button class="results-tab t2-tab active" data-t2="units">Units &amp; Topics</button>
+          <button class="results-tab t2-tab" data-t2="outcomes">Course Outcomes (CO)</button>
+          <button class="results-tab t2-tab" data-t2="po">Programme Outcomes (PO)</button>
+          <button class="results-tab t2-tab" data-t2="matrix">CO-PO Matrix</button>
+          <button class="results-tab t2-tab" data-t2="books">Prescribed Books</button>
+        </div>
+        <div id="t2-units"    class="t2-pane active"><div class="empty-pane">No data loaded yet</div></div>
+        <div id="t2-outcomes" class="t2-pane"><div class="empty-pane">No data loaded yet</div></div>
+        <div id="t2-po"       class="t2-pane"><div class="empty-pane">No data loaded yet</div></div>
+        <div id="t2-matrix"   class="t2-pane"><div class="empty-pane">No data loaded yet</div></div>
+        <div id="t2-books"    class="t2-pane"><div class="empty-pane">No data loaded yet</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- JSON Tab 1 -->
+  <div id="tab-json1" class="tab-content">
+    <div class="json-viewer-wrap">
+      <div class="json-toolbar">
+        <span class="mono" style="font-size:0.8rem;color:var(--text-secondary)">task1_output.json</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm btn-ghost" onclick="copyJSON('json-t1-pre')">Copy</button>
+          <button class="btn btn-sm btn-ghost" onclick="downloadResult(1)">Download</button>
+        </div>
+      </div>
+      <pre class="json-output" id="json-t1-pre"></pre>
+    </div>
+  </div>
+
+  <!-- JSON Tab 2 -->
+  <div id="tab-json2" class="tab-content">
+    <div class="json-viewer-wrap">
+      <div class="json-toolbar">
+        <span class="mono" style="font-size:0.8rem;color:var(--text-secondary)">task2_output.json</span>
+        <div style="display:flex;gap:8px">
+          <button class="btn btn-sm btn-ghost" onclick="copyJSON('json-t2-pre')">Copy</button>
+          <button class="btn btn-sm btn-ghost" onclick="downloadResult(2)">Download</button>
+        </div>
+      </div>
+      <pre class="json-output" id="json-t2-pre"></pre>
+    </div>
+  </div>
+
+  <!-- Bloom Analysis Tab -->
+  <div id="tab-bloom" class="tab-content">
+    <div style="max-width:720px">
+      <div class="bloom-chart-wrap">
+        <div class="bloom-chart-title">Bloom's Taxonomy Distribution</div>
+        <div id="bloom-bars"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- not_extracted Ledger Tab -->
+  <div id="tab-ledger" class="tab-content">
+    <div id="ledger-list" style="display:flex;flex-direction:column;gap:8px;max-width:920px"></div>
+  </div>
+
+  <!-- Curriculum Audit & OBE Accreditation Tab -->
+  <div id="tab-audit" class="tab-content">
+    <div style="max-width:1200px">
+      <!-- Course Identity & Audit Score Header -->
+      <div style="display:flex;justify-content:space-between;align-items:center;background:var(--bg-card);border:1px solid var(--border-mid);border-radius:var(--radius-md);padding:1.25rem 1.5rem;margin-bottom:1.5rem;flex-wrap:wrap;gap:12px">
+        <div>
+          <div style="font-size:0.75rem;font-weight:700;color:var(--text-muted);text-transform:uppercase;letter-spacing:0.08em;margin-bottom:4px">Accreditation Audit Subject</div>
+          <div id="audit-course-title" style="font-size:1.15rem;font-weight:700;color:var(--text-primary)">—</div>
+        </div>
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="text-align:right">
+            <div style="font-size:0.72rem;color:var(--text-secondary);text-transform:uppercase">Curriculum Health</div>
+            <div id="audit-health-score" style="font-size:1.75rem;font-weight:800;font-family:var(--font-mono);color:var(--accent-green)">—</div>
+          </div>
+          <button class="btn btn-sm btn-primary" onclick="openDossierModal()">📑 Generate Full Dossier</button>
+        </div>
+      </div>
+
+      <!-- Audit Metric Cards Grid -->
+      <div class="audit-grid">
+        <!-- 1. Contact Hour & Credit Integrity -->
+        <div class="audit-card">
+          <div class="audit-card-header">
+            <span class="audit-card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Contact Hours &amp; Credits
+            </span>
+            <span id="audit-hour-pill" class="audit-score-pill pill-blue">Checking</span>
+          </div>
+          <div class="audit-metric-display" id="audit-hour-val">— <span style="font-size:1rem;font-weight:500;color:var(--text-secondary)">hrs</span></div>
+          <div class="audit-metric-sub" id="audit-hour-msg">Evaluating unit hour allocations against lecture-tutorial-practical credits...</div>
+        </div>
+
+        <!-- 2. Cognitive Rigor & Bloom HOTS Ratio -->
+        <div class="audit-card">
+          <div class="audit-card-header">
+            <span class="audit-card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+              Cognitive Rigor (HOTS)
+            </span>
+            <span id="audit-bloom-pill" class="audit-score-pill pill-purple">Analysis</span>
+          </div>
+          <div class="audit-metric-display" id="audit-bloom-val">— <span style="font-size:1rem;font-weight:500;color:var(--text-secondary)">% HOTS</span></div>
+          <div class="cognitive-rigor-meter">
+            <div class="rigor-bar-track">
+              <div class="rigor-lots-fill" id="audit-rigor-lots" style="width:50%"></div>
+              <div class="rigor-hots-fill" id="audit-rigor-hots" style="width:50%"></div>
+            </div>
+            <div class="rigor-labels">
+              <span id="audit-lots-label">LOTS (K1–K2): —</span>
+              <span id="audit-hots-label">HOTS (K3–K6): —</span>
+            </div>
+          </div>
+          <div class="audit-metric-sub" id="audit-bloom-msg" style="margin-top:8px">Auditing higher-order cognitive topics against Washington Accord benchmark (&gt;=50%)...</div>
+        </div>
+
+        <!-- 3. CO-PO Matrix Density & PO Attainment -->
+        <div class="audit-card">
+          <div class="audit-card-header">
+            <span class="audit-card-title">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
+              Matrix Coverage Density
+            </span>
+            <span id="audit-matrix-pill" class="audit-score-pill pill-green">Coverage</span>
+          </div>
+          <div class="audit-metric-display" id="audit-matrix-val">— <span style="font-size:1rem;font-weight:500;color:var(--text-secondary)">%</span></div>
+          <div class="audit-metric-sub" id="audit-matrix-msg">Mapped articulation cells between Course Outcomes and Programme Outcomes.</div>
+        </div>
+      </div>
+
+      <!-- Interactive CO-PO Articulation Heatmap -->
+      <div class="heatmap-container">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem;flex-wrap:wrap;gap:8px">
+          <div>
+            <div style="font-size:0.92rem;font-weight:700;color:var(--text-primary)">CO-PO Articulation Heatmap Matrix</div>
+            <div style="font-size:0.75rem;color:var(--text-secondary)">Color intensity visualizes alignment correlation strength (3 = High, 2 = Medium, 1 = Low).</div>
+          </div>
+          <div id="unmapped-pos-alert" style="display:none;background:rgba(245,158,11,0.12);border:1px solid rgba(245,158,11,0.3);color:var(--accent-amber);padding:4px 10px;border-radius:var(--radius-sm);font-size:0.75rem;font-weight:600"></div>
+        </div>
+        <div id="audit-heatmap-table-wrap"></div>
+        <div class="heatmap-legend">
+          <div class="legend-item"><span class="legend-box" style="background:rgba(139,92,246,0.55);border:1px solid rgba(167,139,250,0.6)"></span> <span>Level 3 (Strong / High)</span></div>
+          <div class="legend-item"><span class="legend-box" style="background:rgba(59,130,246,0.4);border:1px solid rgba(96,165,250,0.5)"></span> <span>Level 2 (Moderate / Medium)</span></div>
+          <div class="legend-item"><span class="legend-box" style="background:rgba(34,211,238,0.25);border:1px solid rgba(34,211,238,0.35)"></span> <span>Level 1 (Slight / Low)</span></div>
+          <div class="legend-item"><span class="legend-box" style="background:var(--bg-surface);border:1px solid var(--border-subtle)"></span> <span>Unmapped / Gap</span></div>
+        </div>
+      </div>
+
+      <!-- NBA / OBE Quality Assurance Checklist -->
+      <div style="background:var(--bg-card);border:1px solid var(--border-mid);border-radius:var(--radius-md);padding:1.25rem">
+        <div style="font-size:0.92rem;font-weight:700;color:var(--text-primary);margin-bottom:4px">Accreditation Readiness Checklist</div>
+        <div style="font-size:0.75rem;color:var(--text-secondary);margin-bottom:1rem">Verification checklist against standard NBA Tier-1 &amp; Tier-2 OBE audit criteria.</div>
+        <div class="checklist-grid" id="audit-checklist-grid">
+          <div class="checklist-item pass"><span class="check-icon">✓</span> <span>Syllabus Unit Structure Intact</span></div>
+          <div class="checklist-item pass" id="chk-hours"><span class="check-icon">✓</span> <span>Credit &amp; Contact Hours Reconciled</span></div>
+          <div class="checklist-item pass" id="chk-bloom"><span class="check-icon">✓</span> <span>HOTS Cognitive Progression (&gt;= 50%)</span></div>
+          <div class="checklist-item pass" id="chk-matrix"><span class="check-icon">✓</span> <span>CO-PO Articulation Matrix Populated</span></div>
+          <div class="checklist-item pass" id="chk-books"><span class="check-icon">✓</span> <span>Standard Text &amp; Reference Citations</span></div>
+          <div class="checklist-item pass" id="chk-ledger"><span class="check-icon">✓</span> <span>Clean Extraction Audit Trail</span></div>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- ══════════════════════ CHAT ASSISTANT ══════════════════════ -->
+<section id="section-chat" class="section">
+<div class="chat-layout">
+
+  <!-- Left: Context Panel -->
+  <div class="chat-context">
+    <div class="chat-context-title">Syllabus Metadata</div>
+    <div id="context-status" class="context-status">
+      <div style="color:var(--text-muted);font-size:0.82rem;text-align:center;padding:1rem">
+        No syllabus active in memory.<br/>
+        <a href="#" onclick="navigate('extract');return false" style="color:var(--accent-blue)">Upload a PDF</a>
+        or <a href="#" onclick="loadDemo();navigate('chat');return false" style="color:var(--accent-blue)">load benchmark</a>.
+      </div>
+    </div>
+    <div id="context-summary" style="display:none">
+      <div class="ctx-item"><span class="ctx-label">Document</span><span class="ctx-val" id="ctx-doc">—</span></div>
+      <div class="ctx-item"><span class="ctx-label">Catalog</span><span class="ctx-val" id="ctx-courses">—</span></div>
+      <div class="ctx-item"><span class="ctx-label">Selected Course</span><span class="ctx-val" id="ctx-course">—</span></div>
+      <div class="ctx-item"><span class="ctx-label">Units</span><span class="ctx-val" id="ctx-units">—</span></div>
+      <div class="ctx-item"><span class="ctx-label">Topics</span><span class="ctx-val" id="ctx-topics">—</span></div>
+      <div class="ctx-item"><span class="ctx-label">Course Outcomes</span><span class="ctx-val" id="ctx-cos">—</span></div>
+      <div class="ctx-item"><span class="ctx-label">Matrix Mappings</span><span class="ctx-val" id="ctx-matrix">—</span></div>
+      <div class="ctx-item"><span class="ctx-label">Citations</span><span class="ctx-val" id="ctx-books">—</span></div>
+      <div class="ctx-item"><span class="ctx-label">Ledger Entries</span><span class="ctx-val" id="ctx-ne">—</span></div>
+    </div>
+
+    <!-- Suggestions Panel -->
+    <div id="suggestions-panel" style="margin-top:1.25rem;display:none">
+      <div class="chat-context-title" style="margin-top:0">OBE Recommendations</div>
+      <div id="suggestion-cards" style="display:flex;flex-direction:column;gap:8px"></div>
+    </div>
+
+    <!-- Quick Prompts -->
+    <div style="margin-top:1.5rem">
+      <div class="chat-context-title" style="margin-top:0">Quick Inquiries</div>
+      <div style="display:flex;flex-direction:column;gap:6px">
+        <button class="quick-prompt" onclick="sendQuick('Summarize the curriculum structure and credit distribution')">Curriculum summary</button>
+        <button class="quick-prompt" onclick="sendQuick('Audit Bloom taxonomy cognitive levels for all topics')">Audit Bloom levels</button>
+        <button class="quick-prompt" onclick="sendQuick('Explain any missing sections or not_extracted ledger entries')">Audit ledger entries</button>
+        <button class="quick-prompt" onclick="sendQuick('Evaluate NBA / OBE accreditation compliance')">OBE Accreditation review</button>
+        <button class="quick-prompt" onclick="sendQuick('Generate sample questions spanning K1 through K6 levels')">Sample assessment questions</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Right: Conversation Hub -->
+  <div>
+    <div class="chat-header">
+      <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
+        <div>
+          <div style="font-weight:700;font-size:1.05rem;display:flex;align-items:center;gap:8px">
+            <span>Curriculum Analysis Assistant</span>
+            <span id="chat-mode-pill" class="chat-status-pill online">Cloud Model Active</span>
+          </div>
+          <div id="chat-mode-subtitle" style="font-size:0.75rem;color:var(--text-muted)">Outcome-Based Education (OBE) &amp; Accreditation Assistant</div>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+        <div class="chat-mode-switch" role="group" aria-label="Assistant Engine Mode">
+          <button type="button" id="btn-chatmode-online" class="chat-mode-btn active" onclick="toggleChatMode('online')" title="Switch to Cloud Model">
+            Cloud
+          </button>
+          <button type="button" id="btn-chatmode-offline" class="chat-mode-btn" onclick="toggleChatMode('offline')" title="Switch to Offline Engine">
+            Offline Rules
+          </button>
+        </div>
+        <button class="btn btn-sm btn-ghost" onclick="clearChat()" title="Reset transcript">Clear</button>
+      </div>
+    </div>
+
+    <div class="chat-messages" id="chat-messages">
+      <div class="chat-msg assistant">
+        <div class="chat-avatar">Ω</div>
+        <div class="chat-bubble">
+          <p><b>Welcome to the SYLEX Curriculum Assistant.</b> I analyze syllabus structure, cognitive learning actions, and accreditation mappings.</p>
+          <p>You can ask for:</p>
+          <ul>
+            <li><b>Cognitive Bloom Auditing:</b> Verify whether topics match lower-order (Remember, Understand) or higher-order (Apply, Analyse, Evaluate, Create) levels.</li>
+            <li><b>Accreditation Alignment:</b> Review CO-PO mapping articulation against NBA / ABET criteria.</li>
+            <li><b>Lesson Planning:</b> Formulate 45-period lecture breakdowns and laboratory milestones.</li>
+            <li><b>Examination Formulations:</b> Draft unit-wise quiz and assessment items indexed to Bloom's taxonomy.</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <!-- Quick Chips -->
+    <div class="chat-chips-row" id="chat-chips">
+      <button class="chat-chip" onclick="sendQuick('Suggest 5 exam questions with Bloom levels for this course')">5 Exam Questions</button>
+      <button class="chat-chip" onclick="sendQuick('Create a lecture-by-lecture 45-hour lesson plan')">45-Hour Lesson Plan</button>
+      <button class="chat-chip" onclick="sendQuick('How can I improve the Bloom taxonomy alignment of this course?')">Optimize Bloom Distribution</button>
+      <button class="chat-chip" onclick="sendQuick('Recommend top reference books, lab tools, and online materials')">Reference Resources</button>
+      <button class="chat-chip" onclick="sendQuick('Analyze syllabus gaps, strengths, and NBA compliance')">Accreditation Audit</button>
+    </div>
+
+    <div class="chat-input-row">
+      <input type="text" id="chat-input" class="chat-input"
+             placeholder="Ask a question about this curriculum, exam questions, or accreditation alignment..."
+             onkeydown="if(event.key==='Enter')sendChat()"/>
+      <button class="btn btn-primary" onclick="sendChat()" id="chat-send">Send</button>
+    </div>
+  </div>
+
+</div>
+</section>
+
+<!-- ══════════════════════ SETTINGS ══════════════════════ -->
+<section id="section-settings" class="section">
+<div style="max-width:920px;margin:0 auto;padding:2rem">
+  <h1 class="section-title">Engine Configuration</h1>
+  <p class="section-sub">Zero college-specific parameters. Completely document-agnostic extraction rules.</p>
+
+  <div class="settings-grid">
+    <div class="settings-group">
+      <div class="settings-group-title">Local Server Endpoint</div>
+      <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem">
+        Target backend URL (default: http://localhost:7823)
+      </div>
+      <input type="text" id="server-url" class="text-input" placeholder="http://localhost:7823"
+             value="http://localhost:7823" style="margin-bottom:0.75rem"/>
+      <button class="btn btn-sm btn-secondary" onclick="checkServer()">Verify Endpoint</button>
+      <div id="conn-result" style="margin-top:0.5rem;font-size:0.78rem;color:var(--text-muted)"></div>
+    </div>
+
+    <div class="settings-group">
+      <div class="settings-group-title">Hints Override Template</div>
+      <div style="font-size:0.78rem;color:var(--text-secondary);margin-bottom:0.75rem">
+        Define custom course boundary overrides for adversarial or complex layouts.
+      </div>
+      <pre class="cli-block" style="font-size:0.72rem">{
+  "courses": [
+    {
+      "code": "CS23301",
+      "title": "DATA STRUCTURES",
+      "page": 41
+    }
+  ]
+}</pre>
+      <button class="btn btn-sm btn-ghost" style="margin-top:0.5rem"
+              onclick="downloadHintsTemplate()">Download Template JSON</button>
+    </div>
+
+    <div class="settings-group">
+      <div class="settings-group-title">Active Extraction Rules</div>
+      <div class="toggle-row"><span>Dual-backend table fusion (PyMuPDF + pdfplumber)</span>
+        <button class="toggle on"></button></div>
+      <div class="toggle-row"><span>Printed Bloom marker detection (K1–K6, BT1–BT6)</span>
+        <button class="toggle on"></button></div>
+      <div class="toggle-row"><span>Multi-page articulation matrix stitching</span>
+        <button class="toggle on"></button></div>
+      <div class="toggle-row"><span>Document-wide Programme Outcome search</span>
+        <button class="toggle on"></button></div>
+      <div class="toggle-row"><span>Closed-world topic reconstruction invariant</span>
+        <button class="toggle on"></button></div>
+    </div>
+
+    <div class="settings-group">
+      <div class="settings-group-title">Specification Compliance</div>
+      <div style="font-size:0.82rem;color:var(--text-secondary);line-height:1.8">
+        <b>Specification:</b> 21 September 2026 Evaluation Standard<br/>
+        <b>Architecture:</b> SYLEX-ΩX v2.2 Deterministic &amp; Dual-Mode Hardened<br/>
+        <b>Core Dependencies:</b> PyMuPDF, pdfplumber (Python 3.8+)<br/>
+        <b>Evaluation Command:</b> <code>python sylex.py --pdf &lt;path&gt;</code><br/>
+        <b>Compliance:</b> 100% Offline, Strict Schema Valid, Zero Invented Fields
+      </div>
+      <div style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:6px">
+        <span class="format-tag">Document-Agnostic</span>
+        <span class="format-tag">Exact Sourcing</span>
+        <span class="format-tag">No Hallucinations</span>
+        <span class="format-tag">Deterministic Hash</span>
+      </div>
+    </div>
+  </div>
+
+</div>
+</section>
+
+</div><!-- /app -->
+
+<!-- ══════════════════════ MODALS ══════════════════════ -->
+
+<!-- Course Dossier Modal -->
+<div id="dossier-modal" class="modal-overlay">
+  <div class="modal-container" style="max-width:1000px">
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+        <span>Accreditation Course Dossier Preview</span>
+      </div>
+      <button class="btn btn-sm btn-ghost" onclick="closeDossierModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;font-size:0.8rem;color:var(--text-secondary)">
+        <span>Standard OBE / NBA Institutional Course Master File</span>
+        <span style="font-family:var(--font-mono);color:var(--accent-cyan)">Print-Ready Academic Format</span>
+      </div>
+      <iframe id="dossier-preview-frame" title="Course Dossier Preview" style="width:100%;height:65vh;border:1px solid var(--border-mid);border-radius:var(--radius-sm);background:#ffffff;"></iframe>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm btn-ghost" onclick="downloadDossierHtml()">Download HTML</button>
+      <button class="btn btn-sm btn-primary" onclick="printDossier()">Print / Save PDF</button>
+      <button class="btn btn-sm btn-secondary" onclick="closeDossierModal()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hints Studio Modal -->
+<div id="hints-modal" class="modal-overlay">
+  <div class="modal-container" style="max-width:780px">
+    <div class="modal-header">
+      <div class="modal-title">
+        <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
+        <span>Hints Studio — Boundary Overrides</span>
+      </div>
+      <button class="btn btn-sm btn-ghost" onclick="closeHintsStudio()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem">
+        Explicitly pin course page boundaries and titles for irregular, multi-syllabus or complex PDFs. Evaluator specification: <code>--hints hints.json</code>.
+      </div>
+      <table class="hints-table">
+        <thead>
+          <tr>
+            <th style="width:140px">Course Code</th>
+            <th>Course Title</th>
+            <th style="width:90px">Start Page</th>
+            <th style="width:90px">End Page</th>
+            <th style="width:40px"></th>
+          </tr>
+        </thead>
+        <tbody id="hints-table-body"></tbody>
+      </table>
+      <div style="margin-top:1rem">
+        <button class="btn btn-sm btn-ghost" onclick="addHintRow()">+ Add Course Boundary</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-sm btn-ghost" onclick="downloadHintsJSON()">Download hints.json</button>
+      <button class="btn btn-sm btn-primary" onclick="applyHintsAndRun()">Save &amp; Apply</button>
+      <button class="btn btn-sm btn-secondary" onclick="closeHintsStudio()">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<script src="demo-data.js"></script>
+<script src="app.js"></script>
+<script src="chat.js"></script>
+</body>
+</html>

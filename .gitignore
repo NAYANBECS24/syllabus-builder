@@ -1,0 +1,39 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+venv/
+ENV/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Vercel
+.vercel
+
+# Temporary / Scratch Files
+stderr.txt
+stdout.txt
+test_page.txt
+doc_content.txt
+*.log
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
