@@ -44,7 +44,7 @@ if not HAS_PDFPLUMBER and not HAS_FITZ:
 # ══════════════════════════════════════════════════════════════════════
 
 RE_CODE = re.compile(
-    r'\b(?=[A-Z0-9\-]{3,15}\b)(?=[A-Z0-9\-]*[A-Z])(?=[A-Z0-9\-]*\d)[A-Z0-9]+(?:[\-][A-Z0-9]+)?\b'
+    r'\b(?=[A-Z0-9\-]{3,15}\b)(?=[A-Z0-9\-]*[A-Z])(?=[A-Z0-9\-]*\d{3,})[A-Z0-9]+(?:[\-][A-Z0-9]+)?\b'
 )
 RE_CODE_SPACED = re.compile(r'\b[A-Z]{2,5}\s+\d{2,4}[A-Z]?\b')
 RE_CODE_DOT    = re.compile(r'\b\d{1,2}\.\d{2,4}[A-Z]?\b')  # MIT/Caltech style e.g. 6.0001, 18.06
@@ -82,25 +82,31 @@ def is_valid_course_code(code: str) -> bool:
         return False
     if c in {'POP3', 'IPV4', 'IPV6', 'HTML5', 'CSS3', 'MP3', 'MP4', 'SHA1', 'SHA2', 'WIN32', 'X86', 'UTF8', 'UTF16', 'HTTP', 'HTTPS'}:
         return False
+    # Reject codes containing dots or commas (e.g. "1.2023", "TOTAL:45")
+    if '.' in c or ',' in c:
+        return False
     # Reject numbered list items (e.g. "2 MITTAL", "1 GHOSAL", "1. INTRODUCTION", "3 STEVE")
     if re.match(r'^\d+[\s\.\)\:\-]+[A-Za-z]+', c):
         return False
     # Exclude legal section numbers (e.g. 304B, 376A: 2-3 digits + 1 letter)
     if re.fullmatch(r'\d{2,3}[A-Z]', c):
         return False
-    if re.match(r'^(?:UNIT|MODULE|CHAPTER|PART|SECTION|BLOCK|WEEK|CO|PO|PSO|PEO|PLO|ILO|CLO|LO|GA|BT|BL|K|ACT|RULE|ANNEXURE)[\-\s_]?\d+', c):
+    if re.match(r'^(?:UNIT|MODULE|MODUL|CHAPTER|PART|SECTION|BLOCK|WEEK|CO|PO|PSO|PEO|PLO|ILO|CLO|LO|GA|BT|BL|K|ACT|RULE|ANNEXURE)[\-\s_]?\d+', c):
         return False
     # Exclude year ranges like 2021-22 or 2021/2022
     if re.fullmatch(r'\d{4}[-\/]\d{2,4}', c):
+        return False
+    # Reject tokens that look like ordinals or edition numbers (e.g. "1ST", "2ND", "3RD", "7TH")
+    if re.fullmatch(r'\d+(?:ST|ND|RD|TH)', c):
+        return False
+    # Reject SEMESTER-N, TOTAL:N patterns
+    if re.match(r'^(?:SEMESTER|TOTAL|HOURS|MARKS)\s*[-:.]?\s*\d*$', c):
         return False
     # Reject pure numbers < 5 digits (e.g. page numbers 224, serial numbers 1, 2)
     if re.fullmatch(r'\d{1,4}', c) or re.fullmatch(r'\d{13,}', c):
         return False
     # Allow 5-10 digit university numeric subject codes (e.g. 34421002, 1910401)
     if re.fullmatch(r'\d{5,10}', c):
-        return True
-    # Support dot-notation (MIT style) e.g. 6.0001, 18.06
-    if re.fullmatch(r'\d{1,2}\.\d{2,4}[A-Z]?', c):
         return True
     # If contains space, prefix must be 2-6 letters followed by digits (e.g. "CS 101")
     if ' ' in c:
@@ -109,6 +115,9 @@ def is_valid_course_code(code: str) -> bool:
     has_alpha = bool(re.search(r'[A-Z]', c))
     has_digit = bool(re.search(r'\d', c))
     if not (has_alpha and has_digit):
+        return False
+    # Require at least 3 consecutive digits (reject M2M, CORTEXM3/M4, 4NF, I2C, etc.)
+    if not re.search(r'\d{3,}', c.replace(' ', '')):
         return False
     if not (3 <= len(c.replace(' ', '')) <= 15):
         return False
@@ -141,7 +150,7 @@ def clean_title(title_lines: List[str]) -> str:
     return raw.strip(' :-|.,;')
 RE_UNIT = re.compile(
     r'(?i)(?:^|[\n\r]|(?<=[.;:\s]))'
-    r'(UNIT|MODULE|PART|CHAPTER|SECTION|WEEK|SESSION)\s*'
+    r'(UNIT|MODUL(?:E)?|PART|CHAPTER|SECTION|WEEK|SESSION)\s*'
     r'[-–—:.\s]*\s*([IVXLCDM]+|\d+)\b'
 )
 RE_ROMAN_UNIT = re.compile(
@@ -169,7 +178,9 @@ RE_REFBOOK   = re.compile(
 
 # Bloom markers
 RE_K_LEVEL  = re.compile(r'\(?K([1-6])\)?')
-RE_BT_LEVEL = re.compile(r'\b(?:BT|BL|L)([1-6])\b')
+RE_BT_LEVEL = re.compile(r'(?<![A-Za-z])(?:BT|BL)([1-6])\b')
+# L-level pattern: only match L1-L6 when NOT preceded by letters (avoids "L2 cache")
+RE_L_LEVEL  = re.compile(r'(?<![A-Za-z])L([1-6])(?![A-Za-z0-9])')
 BLOOM_WORDS = ["remember","understand","apply","analyse","analyze","evaluate","create"]
 
 ROMAN_MAP = {'I':1,'V':5,'X':10,'L':50,'C':100,'D':500,'M':1000}
@@ -236,18 +247,24 @@ def infer_bloom(text: str) -> str:
     return "understand"
 
 def detect_printed_bloom(text: str) -> Optional[Tuple[str, str]]:
-    """Return (level, 'printed') if a Bloom level is explicitly stated."""
+    """Return (level, 'printed') if a Bloom level is explicitly stated via a code marker.
+    Only real level codes (K1-K6, BT1-BT6, BL1-BL6, L1-L6) count as 'printed'.
+    Verbs like 'apply' or 'analyze' in prose are NOT treated as printed levels."""
+    k_map = {1:"remember",2:"understand",3:"apply",4:"analyse",5:"evaluate",6:"create"}
     # K1-K6
     m = RE_K_LEVEL.search(text)
     if m:
-        k = {1:"remember",2:"understand",3:"apply",4:"analyse",5:"evaluate",6:"create"}
-        lvl = k.get(int(m.group(1)))
+        lvl = k_map.get(int(m.group(1)))
         if lvl: return lvl, "printed"
-    # BT/BL/L levels
+    # BT/BL levels
     m = RE_BT_LEVEL.search(text)
     if m:
-        k = {1:"remember",2:"understand",3:"apply",4:"analyse",5:"evaluate",6:"create"}
-        lvl = k.get(int(m.group(1)))
+        lvl = k_map.get(int(m.group(1)))
+        if lvl: return lvl, "printed"
+    # L levels (careful to avoid "L2 cache" etc.)
+    m = RE_L_LEVEL.search(text)
+    if m:
+        lvl = k_map.get(int(m.group(1)))
         if lvl: return lvl, "printed"
     # Bracketed single/double letter code: (R), (U), (Ap), (An), (Ev), (Cr), (E), (C)
     m_code = re.search(r'[\(\[]\s*(R|U|Ap|An|Ev|Cr|E|C)\s*[\)\]]', text, re.I)
@@ -255,11 +272,8 @@ def detect_printed_bloom(text: str) -> Optional[Tuple[str, str]]:
         code_map = {'R':"remember",'U':"understand",'AP':"apply",'AN':"analyse",'EV':"evaluate",'E':"evaluate",'CR':"create",'C':"create"}
         lvl = code_map.get(m_code.group(1).upper())
         if lvl: return lvl, "printed"
-    # Explicit words
-    for word in BLOOM_WORDS:
-        if re.search(r'\b' + word + r'\b', text, re.I):
-            lvl = "analyse" if word == "analyze" else word.lower()
-            return lvl, "printed"
+    # NOTE: Verbs in prose (e.g. "apply", "analyze") are NOT "printed" levels.
+    # They are only used for inference (bloom_source="inferred").
     return None
 
 # ══════════════════════════════════════════════════════════════════════
@@ -496,10 +510,11 @@ class CourseDetector:
                     line = lines[i]
                     if re.fullmatch(r'\d{1,4}', line): continue
 
-                    # For mid-page lines (i >= 8), require strong syllabus signals immediately below
+                    # For mid-page lines (i >= 8), require strong syllabus signals below
                     if i >= 8:
-                        below_chunk = ' '.join(lines[i:min(i+8, len(lines))])
-                        if not re.search(r'(?i)(Category\s+L\s+T\s+P|PREAMBLE|PREREQUISITE|COURSE\s*OBJECTIVES?|COURSE\s*OUTCOMES?|SYLLABUS)', below_chunk):
+                        # Look further down (up to 20 lines) for syllabus signals including L T P C patterns
+                        below_chunk = ' '.join(lines[i:min(i+20, len(lines))])
+                        if not re.search(r'(?i)(Category\s+L\s+T\s+P|L\s*T\s*P\s*C|PREAMBLE|PREREQUISITE|COURSE\s*OBJECTIVES?|COURSE\s*OUTCOMES?|SYLLABUS|\d\s+\d\s+\d\s+\d)', below_chunk):
                             continue
 
                     words = line.split()
@@ -563,9 +578,9 @@ class CourseDetector:
                             t = clean_title(title_lines)
                             if t and len(t) > 3:
                                 norm = normalize_id(code_cand)
-                                cand_key = f"{norm}:{norm_title(t)}:{pg.number}"
-                                if cand_key not in syllabus_candidates:
-                                    syllabus_candidates[cand_key] = CourseCandidate(code_cand, t, pg.number, 0.98, ["syllabus-page"])
+                                # Dedup by code alone - keep the first (best) entry per code
+                                if norm not in syllabus_candidates:
+                                    syllabus_candidates[norm] = CourseCandidate(code_cand, t, pg.number, 0.98, ["syllabus-page"])
                                 # Only break if top of page; mid-page may have another course or continue
                                 if i < 8:
                                     break
@@ -584,13 +599,13 @@ class CourseDetector:
                             if sum(c.isalpha() for c in nxt) > len(nxt) * 0.4:
                                 title_lines.append(nxt)
                                 if len(title_lines) >= 2: break
-                        if title_lines:
-                            t = clean_title(title_lines)
-                            if t and len(t) > 3:
-                                norm = normalize_id(code_cand)
-                                cand_key = f"{norm}:{norm_title(t)}"
-                                if cand_key not in curriculum_candidates:
-                                    curriculum_candidates[cand_key] = CourseCandidate(code_cand, t, pg.number, 0.85, ["curriculum-table"])
+                        if is_valid_course_code(raw_code) and len(raw_title) > 3:
+                                    cleaned_t = clean_title(title_lines)
+                                    if cleaned_t and len(cleaned_t) > 3:
+                                        norm = normalize_id(code_cand)
+                                        # Dedup by code alone
+                                        if norm not in curriculum_candidates:
+                                            curriculum_candidates[norm] = CourseCandidate(code_cand, cleaned_t, pg.number, 0.85, ["curriculum-table"])
 
             # 3. Curriculum Scheme from structured tables
             if is_multi_course_page or pg.number <= 25:
@@ -609,9 +624,9 @@ class CourseDetector:
                                     cleaned_t = clean_title([raw_title])
                                     if cleaned_t and len(cleaned_t) > 3:
                                         norm = normalize_id(raw_code)
-                                        cand_key = f"{norm}:{norm_title(cleaned_t)}"
-                                        if cand_key not in curriculum_candidates:
-                                            curriculum_candidates[cand_key] = CourseCandidate(raw_code, cleaned_t, pg.number, 0.90, ["table-row"])
+                                        # Dedup by code alone
+                                        if norm not in curriculum_candidates:
+                                            curriculum_candidates[norm] = CourseCandidate(raw_code, cleaned_t, pg.number, 0.90, ["table-row"])
 
             # 4. Explicit label fallback: Course Code: CS23301
             for m in RE_LABEL_CODE.finditer(text):
@@ -620,9 +635,9 @@ class CourseDetector:
                     norm = normalize_id(code_cand)
                     t = self._extract_title(text, m.start())
                     if t:
-                        cand_key = f"{norm}:{norm_title(t)}:{pg.number}"
-                        if cand_key not in syllabus_candidates:
-                            syllabus_candidates[cand_key] = CourseCandidate(code_cand, t, pg.number, 0.95, ["explicit-label"])
+                        # Dedup by code alone
+                        if norm not in syllabus_candidates:
+                            syllabus_candidates[norm] = CourseCandidate(code_cand, t, pg.number, 0.95, ["explicit-label"])
 
         # Merge: syllabus_candidates wins over curriculum_candidates
         from collections import OrderedDict
@@ -717,10 +732,14 @@ class CourseDetector:
 
         if idx is None:
             def matches_cand(c):
-                if target_t and norm_title(c.title) and (target_t == norm_title(c.title) or target_t in norm_title(c.title) or norm_title(c.title) in target_t):
-                    return True
+                # Match by code first (most reliable)
                 if codes_match(c.code, code): return True
                 if any(codes_match(a, code) for a in getattr(c, 'aliases', [])): return True
+                # Title match only if BOTH titles are non-empty after normalization
+                c_title_norm = norm_title(c.title)
+                if target_t and c_title_norm and len(target_t) > 3 and len(c_title_norm) > 3:
+                    if target_t == c_title_norm or target_t in c_title_norm or c_title_norm in target_t:
+                        return True
                 return False
 
             idx = next((i for i, c in enumerate(candidates) if matches_cand(c)), None)
@@ -744,9 +763,9 @@ class CourseDetector:
         target_cand = candidates[idx]
 
         # If target candidate is merely from a curriculum overview table, search downstream for the actual detailed syllabus page!
-        if "curriculum-table" in target_cand.signals or "table-row" in target_cand.signals or target_cand.page <= 25:
+        if "curriculum-table" in target_cand.signals or "table-row" in target_cand.signals:
             t_norm = norm_title(target_cand.title)
-            syl_cand = next((c for c in candidates if c.page > target_cand.page and (codes_match(c.code, target_cand.code) or (t_norm and (t_norm == norm_title(c.title) or t_norm in norm_title(c.title) or norm_title(c.title) in t_norm)))), None)
+            syl_cand = next((c for c in candidates if c.page > target_cand.page and (codes_match(c.code, target_cand.code) or (t_norm and len(t_norm) > 3 and (t_norm == norm_title(c.title) or t_norm in norm_title(c.title) or norm_title(c.title) in t_norm)))), None)
             if syl_cand:
                 idx = candidates.index(syl_cand)
                 target_cand = syl_cand
@@ -762,9 +781,17 @@ class CourseDetector:
                         break
 
         start = target_cand.page
-        next_cand = next((c for c in candidates[idx+1:] if c.page > start and (c.page - start) <= 6), None)
+        # Find next candidate that is a different course (could be on same page or later)
+        next_cand = next((c for c in candidates[idx+1:]
+                          if not codes_match(c.code, target_cand.code)
+                          and c.page >= start
+                          and (c.page - start) <= 6), None)
         if next_cand:
-            end = next_cand.page
+            if next_cand.page == start:
+                # Same page: we trust the text-based cross-course truncation in DeepExtractor
+                end = start
+            else:
+                end = next_cand.page
         else:
             end = None
             max_scan = min(start + 5, self.reader.page_count)
@@ -772,7 +799,7 @@ class CourseDetector:
                 p_text = pg.text or ""
                 if any(k in p_text.upper() for k in ["COURSE OUTCOMES", "SYLLABUS", "COURSE OBJECTIVES", "PREAMBLE", "PREREQUISITES"]):
                     m_c = RE_CODE.search(p_text[:400])
-                    if m_c and not codes_match(target_cand.code, m_c.group(0)):
+                    if m_c and is_valid_course_code(m_c.group(0)) and not codes_match(target_cand.code, m_c.group(0)):
                         end = pg.number
                         break
             if end is None or end <= start:
@@ -1277,10 +1304,19 @@ class DeepExtractor:
             elif ch in ')]}':
                 if depth > 0: depth -= 1
                 cur.append(ch)
-            elif depth == 0 and ch in dash_chars and (i > 0 and text[i-1].isspace()) and (i + 1 < n and text[i+1].isspace()):
-                token = ''.join(cur).strip()
-                if token: parts.append(token)
-                cur = []
+            elif depth == 0 and ch in dash_chars:
+                # Split if there's a space on at least one side
+                # Don't split if dash is between two letters with no space (e.g. Semi-Groups)
+                has_space_before = (i > 0 and text[i-1].isspace())
+                has_space_after = (i + 1 < n and text[i+1].isspace())
+                has_letter_before = (i > 0 and text[i-1].isalpha())
+                has_letter_after = (i + 1 < n and text[i+1].isalpha())
+                if (has_space_before or has_space_after) and not (has_letter_before and has_letter_after and not has_space_before and not has_space_after):
+                    token = ''.join(cur).strip()
+                    if token: parts.append(token)
+                    cur = []
+                else:
+                    cur.append(ch)
             else:
                 cur.append(ch)
             i += 1
@@ -1318,7 +1354,7 @@ class DeepExtractor:
         if cur:
             token = ''.join(cur).strip()
             if token: parts.append(token)
-        return [p.strip(' .') for p in parts if len(p.strip()) > 2]
+        return [p.strip() for p in parts if len(p.strip()) > 2]
 
     def _by_newline(self, text: str) -> List[str]:
         lines = [l.strip() for l in text.split('\n') if l.strip()]
@@ -1341,7 +1377,7 @@ class DeepExtractor:
                 expanded.append(p)
 
         for part in expanded:
-            part = part.strip().strip('.,;:')
+            part = part.strip().strip(',;:')
             # Clean leading bullet markers
             part = re.sub(r'^[\u2022\u2023\u25e6\u2219\-\*\>\u27a2\u27a4\u25b6\u25ba\u25cf\u25aa\u25ab\uf0a7\uf0d8\u2794\u279c\u27a1\u27a7\u27a8\u27a9\u27aa\u27ab\u27ac\u27ad\u27ae\u27af\u27b1\u27b2\u27b3\u27b4\u27b5\u27b6\u27b7\u27b8\u27b9\u27ba\u27bb\u27bc\u27bd\u27be\u27bf\s]+', '', part).strip()
             if len(part) < 2: continue
@@ -1410,6 +1446,7 @@ class DeepExtractor:
 
         bloom = None
         src = "inferred"
+        # Check if last line is a standalone Bloom word (e.g. just "Apply" or "Understand")
         last_line = lines[-1].strip(' .')
         for bw in ["remember","understand","apply","analyse","analyze","evaluate","create"]:
             if last_line.lower() == bw:
@@ -1417,18 +1454,27 @@ class DeepExtractor:
                 src = "printed"
                 lines = lines[:-1]
                 break
+        # Check if last line contains a level code like (K3), (BT2), etc.
+        # Instead of dropping the entire line, strip only the marker and keep the rest
         if not bloom and lines:
-            last_line = lines[-1].strip(' .')
-            m_bt = re.search(r'\(?(K[1-6]|BT[1-6]|L[1-6])\)?', last_line, re.I)
+            last_line = lines[-1]
+            m_bt = re.search(r'\s*\(?(K[1-6]|BT[1-6]|L[1-6])\)?\s*$', last_line, re.I)
             if m_bt:
                 k_map = {'1':"remember",'2':"understand",'3':"apply",'4':"analyse",'5':"evaluate",'6':"create"}
                 digit = re.search(r'\d', m_bt.group(0)).group(0)
                 bloom = k_map.get(digit, "understand")
                 src = "printed"
-                lines = lines[:-1]
+                # Keep the rest of the line text (strip only the marker)
+                cleaned_last = last_line[:m_bt.start()].strip()
+                if cleaned_last:
+                    lines[-1] = cleaned_last
+                else:
+                    lines = lines[:-1]
 
         co_text = ' '.join(lines)
         co_text = re.sub(r'\s+', ' ', co_text).strip().rstrip('.,;')
+        # Also strip any inline (K1)-(K6) markers from the text body
+        co_text = re.sub(r'\s*\(?K[1-6]\)?', '', co_text).strip().rstrip('.,;')
         if len(co_text) < 5: return None
 
         if not bloom:
@@ -1737,12 +1783,14 @@ class DeepExtractor:
             line = line.strip()
             if not line: continue
             if re.fullmatch(r'\d{3,4}', line): continue
-            # Stop at non-book sections
-            if re.match(r'(?i)^(?:UNIT|MODULE|CHAPTER|PART|SECTION|CO\s*[-/]?\s*PO|CO\d|PO\d|Mapping|Articulation|Programme|Course\s*Designers?|Faculty|Email|S\.?\s*No|Prepared\s+by|Verified\s+by|Approved)', line):
+            # Stop at non-book sections and footer/web link lines
+            if re.match(r'(?i)^(?:UNIT|MODULE|MODUL|CHAPTER|PART|SECTION|CO\s*[-/]?\s*PO|CO\d|PO\d|Mapping|Articulation|Programme|Course\s*Designers?|Faculty|Email|S\.?\s*No|Prepared\s+by|Verified\s+by|Approved|Recommended\s+in|Board\s+of\s+Studies|ONLINE\s*RESOUR|WEB\s*RESOUR|E-?\s*RESOUR|NPTEL|Coursera|Swayam|MOOC)', line):
+                break
+            # Stop at web links (http/https/www)
+            if re.match(r'(?i)^\s*(?:https?://|www\.)', line):
                 break
             # Stop at next course header pattern
             if re.match(r'^[A-Z0-9\.\-]{3,15}\s*$', line) and re.search(r'[A-Z]', line) and re.search(r'\d', line):
-                from sylex import is_valid_course_code
                 if is_valid_course_code(line.strip()):
                     break
             is_num_start = bool(re.match(r'^\d{1,2}[\.\)]?$', line) or (RE_BOOK_NUM.match(line) and re.match(r'^\d{1,2}[\.\)]?\s+[A-Z]', line)))
@@ -1922,11 +1970,15 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
     # Find target using codes_match and title
     t_target = norm_title(course_id)
     def matches_target(c):
+        # Match by code first (most reliable)
         if codes_match(c.code, course_id): return True
         if any(codes_match(a, course_id) for a in getattr(c, 'aliases', [])): return True
-        if t_target and (t_target == norm_title(c.title) or t_target in norm_title(c.title) or norm_title(c.title) in t_target):
-            return True
-        if course_id.upper() in c.title.upper(): return True
+        # Title match only if BOTH titles are non-empty after normalization
+        c_title_norm = norm_title(c.title)
+        if t_target and c_title_norm and len(t_target) > 3 and len(c_title_norm) > 3:
+            if t_target == c_title_norm or t_target in c_title_norm or c_title_norm in t_target:
+                return True
+        if len(course_id) > 3 and course_id.upper() in c.title.upper(): return True
         return False
 
     target = next((c for c in cands if matches_target(c)), None) if cands else None
