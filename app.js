@@ -17,17 +17,25 @@ const defaultServerUrl = (typeof window !== 'undefined' && window.location.origi
 
 const STATE = {
   section:        'home',
-  task1Result:    (typeof DEMO_TASK1 !== 'undefined' ? DEMO_TASK1 : null),
-  task2Result:    (typeof DEMO_TASK2 !== 'undefined' ? DEMO_TASK2 : null),
+  task1Result:    null,
+  task2Result:    null,
   serverOnline:   false,
   serverUrl:      defaultServerUrl,
-  extractionMode: localStorage.getItem('sylex_mode') || 'online',
+  extractionMode: ['offline', 'online'].includes(localStorage.getItem('sylex_mode'))
+    ? localStorage.getItem('sylex_mode')
+    : 'offline',
+  dataSource:     null,
 };
 window.STATE = STATE;
 
 // ── DOM helpers ─────────────────────────────────────────────────────
 const $ = id => document.getElementById(id);
-const esc = s => String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+const esc = s => String(s ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;')
+  .replace(/"/g, '&quot;')
+  .replace(/'/g, '&#39;');
 
 function getCloudModel() {
   const selector = $('cloud-model-select');
@@ -50,13 +58,24 @@ window.saveCloudModelSetting = saveCloudModelSetting;
 
 // ── Navigation ──────────────────────────────────────────────────────
 function navigate(section) {
-  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
-  document.querySelectorAll('.nav-link').forEach(l => l.classList.remove('active'));
   const target = $(`section-${section}`);
+  if (!target) return;
+  document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.nav-link').forEach(l => {
+    l.classList.remove('active');
+    l.removeAttribute('aria-current');
+  });
   const link   = document.querySelector(`[data-nav="${section}"]`);
-  if (target) target.classList.add('active');
-  if (link)   link.classList.add('active');
+  target.classList.add('active');
+  if (link) {
+    link.classList.add('active');
+    link.setAttribute('aria-current', 'page');
+  }
   STATE.section = section;
+  if (window.location.hash !== `#${section}`) {
+    window.history.replaceState(null, '', `#${section}`);
+  }
+  window.scrollTo?.({ top: 0, behavior: 'auto' });
 }
 window.navigate = navigate;
 
@@ -64,7 +83,14 @@ window.navigate = navigate;
 function initUpload() {
   const zone  = $('drop-zone');
   const input = $('file-input');
+  if (!zone || !input) return;
   zone.addEventListener('click',      () => input.click());
+  zone.addEventListener('keydown', e => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      input.click();
+    }
+  });
   zone.addEventListener('dragover',   e => { e.preventDefault(); zone.classList.add('drag-over'); });
   zone.addEventListener('dragleave',  () => zone.classList.remove('drag-over'));
   zone.addEventListener('drop',       e => {
@@ -75,22 +101,48 @@ function initUpload() {
   input.addEventListener('change', () => { if (input.files[0]) handleFile(input.files[0]); });
   $('btn-remove-file')?.addEventListener('click', clearFile);
   $('btn-run')?.addEventListener('click', runExtraction);
+  $('mode-card-offline')?.addEventListener('click', () => setMode('offline'));
+  $('mode-card-online')?.addEventListener('click', () => setMode('online'));
+  $('task-select')?.addEventListener('change', syncTaskFields);
+  syncTaskFields();
+}
+
+function syncTaskFields() {
+  const courseInput = $('course-input');
+  if (!courseInput) return;
+  const isSingleCourse = $('task-select')?.value === '2';
+  courseInput.disabled = !isSingleCourse;
+  courseInput.required = isSingleCourse;
+  courseInput.setAttribute('aria-required', String(isSingleCourse));
+  courseInput.placeholder = isSingleCourse ? 'e.g. CS23301 or DATA STRUCTURES' : 'Select single-course detail to enable';
 }
 
 function handleFile(f) {
   if (!f.name.toLowerCase().endsWith('.pdf')) {
-    toast('⚠ Please select a PDF file', 'error'); return;
+    toast('Please select a PDF file', 'error'); return;
+  }
+  if (f.size > 50 * 1024 * 1024) {
+    toast('PDF exceeds the 50 MB upload limit', 'error'); return;
+  }
+  if (STATE.activeTask2AbortController) {
+    try { STATE.activeTask2AbortController.abort(); } catch (_) {}
   }
   STATE.pdfFile = f;
+  STATE.courseCache = {};
+  STATE.task1Result = null;
+  STATE.task2Result = null;
+  STATE.dataSource = null;
   $('chosen-name').textContent = f.name;
   $('chosen-size').textContent = fmtBytes(f.size);
   $('file-chosen').classList.add('visible');
   $('btn-run').disabled = false;
-  toast('📄 ' + f.name + ' loaded', 'success');
+  renderAll();
+  toast(f.name + ' is ready to process', 'success');
 }
 
 function clearFile() {
   STATE.pdfFile = null;
+  STATE.courseCache = {};
   $('file-chosen').classList.remove('visible');
   $('file-input').value = '';
   $('btn-run').disabled = true;
@@ -102,8 +154,29 @@ function fmtBytes(b) {
   return (b/(1<<20)).toFixed(2) + ' MB';
 }
 
+function safeFilename(value, fallback = 'download') {
+  const cleaned = String(value || fallback).replace(/[^A-Za-z0-9_.-]+/g, '_').replace(/^\.+|\.+$/g, '');
+  return cleaned || fallback;
+}
+
+function downloadBlob(blob, filename) {
+  const objectUrl = URL.createObjectURL(blob);
+  const anchor = Object.assign(document.createElement('a'), {
+    href: objectUrl,
+    download: safeFilename(filename),
+  });
+  anchor.click();
+  setTimeout(() => URL.revokeObjectURL(objectUrl), 0);
+}
+
+function csvCell(value) {
+  let text = String(value ?? '');
+  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
 // ── Server check ────────────────────────────────────────────────────
-async function checkServer() {
+async function checkServer(silent = false) {
   let url = ($('server-url')?.value || STATE.serverUrl || defaultServerUrl).trim();
   if (!isLocal && $('server-url') && $('server-url').value.includes('localhost:7823')) {
     url = window.location.origin;
@@ -122,25 +195,28 @@ async function checkServer() {
     if (resp.ok) {
       const data = await resp.json();
       STATE.serverOnline = true;
+      STATE.serverUrl = fetchUrl;
       badge.className = 'nav-badge online';
       if (label) label.textContent = 'Server Online';
-      if (bar) { bar.className = 'server-bar online'; barText.innerHTML = `✅ SYLEX server running at <code>${fetchUrl}</code>`; }
-      if (connRes) connRes.innerHTML = `<span style="color:var(--accent-green)">✓ Connected — Python ${data.python || ''}</span>`;
-      toast('✅ Server connected', 'success');
+      if (bar) { bar.className = 'server-bar online'; barText.innerHTML = `Extraction service available at <code>${esc(fetchUrl)}</code>`; }
+      if (connRes) connRes.innerHTML = `<span style="color:var(--accent-green)">✓ Connected — Python ${esc(data.python || '')}</span>`;
+      if (!silent) toast('Extraction service connected', 'success');
       return true;
     }
   } catch (_) {}
   STATE.serverOnline = false;
   badge.className = 'nav-badge offline';
-  if (label) label.textContent = 'Offline Mode';
-  if (bar) { bar.className = 'server-bar offline'; barText.innerHTML = `⚡ Demo mode — run <code>python sylex_server.py</code> for live extraction`; }
-  if (connRes) connRes.innerHTML = `<span style="color:var(--accent-amber)">⚠ No server — run python sylex_server.py</span>`;
+  if (label) label.textContent = 'Service Offline';
+  if (bar) { bar.className = 'server-bar offline'; barText.innerHTML = `Extraction service unavailable. Run <code>python run.py --server</code> to process documents.`; }
+  if (connRes) connRes.innerHTML = `<span style="color:var(--accent-amber)">Unavailable — run <code>python run.py --server</code></span>`;
+  if (!silent) toast('Extraction service is unavailable', 'error');
   return false;
 }
 window.checkServer = checkServer;
 
 // ── Mode Handling (Online vs Offline) ────────────────────────────────
-function setMode(mode) {
+function setMode(mode, announce = true) {
+  if (!['offline', 'online'].includes(mode)) return;
   STATE.extractionMode = mode;
   localStorage.setItem('sylex_mode', mode);
 
@@ -154,19 +230,23 @@ function setMode(mode) {
   if (mode === 'online') {
     cardOff?.classList.remove('active');
     cardOn?.classList.add('active');
+    cardOff?.setAttribute('aria-pressed', 'false');
+    cardOn?.setAttribute('aria-pressed', 'true');
     if (drawer) drawer.style.display = 'block';
     if (badge) { badge.className = 'mode-nav-badge online'; }
-    if (label) { label.textContent = '🌐 Online Mode'; }
-    if (btnRun) { btnRun.innerHTML = '🌐 Extract with Cloud AI'; }
-    toast('🌐 Online Mode active — Cloud AI enabled', 'info');
+    if (label) { label.textContent = 'Cloud-assisted'; }
+    if (btnRun) { btnRun.textContent = 'Run cloud-assisted extraction'; }
+    if (announce) toast('Cloud-assisted processing selected', 'info');
   } else {
     cardOn?.classList.remove('active');
     cardOff?.classList.add('active');
+    cardOn?.setAttribute('aria-pressed', 'false');
+    cardOff?.setAttribute('aria-pressed', 'true');
     if (drawer) drawer.style.display = 'none';
     if (badge) { badge.className = 'mode-nav-badge offline'; }
-    if (label) { label.textContent = '⚡ Offline Engine'; }
-    if (btnRun) { btnRun.innerHTML = '⚡ Extract (Offline)'; }
-    toast('⚡ Offline Mode active — 100% local engine', 'success');
+    if (label) { label.textContent = 'Local deterministic'; }
+    if (btnRun) { btnRun.textContent = 'Run local extraction'; }
+    if (announce) toast('Local processing selected', 'success');
   }
   if (typeof window.updateChatModeUI === 'function') {
     window.updateChatModeUI(mode);
@@ -185,8 +265,10 @@ function loadOnlineSettings() {
   if (selector && savedModel && available.includes(savedModel)) {
     selector.value = savedModel;
   }
-  const savedMode = localStorage.getItem('sylex_mode') || 'online';
-  setMode(savedMode);
+  const savedMode = ['offline', 'online'].includes(localStorage.getItem('sylex_mode'))
+    ? localStorage.getItem('sylex_mode')
+    : 'offline';
+  setMode(savedMode, false);
 }
 
 async function testOnlineKey() {
@@ -237,8 +319,13 @@ async function runExtraction() {
   const mode = STATE.extractionMode || 'offline';
 
   if (task === '2' && !course) {
-    toast('⚠️ Enter a Course Code for Task 2, or choose Task 1 to list all courses', 'error');
+    toast('Enter a course identifier for single-course extraction', 'error');
     $('course-input')?.focus();
+    return;
+  }
+
+  if (!STATE.serverOnline && !(await checkServer(true))) {
+    toast('Start the extraction service before processing this document', 'error');
     return;
   }
 
@@ -247,34 +334,28 @@ async function runExtraction() {
   $('btn-run').disabled = true;
   setProgress(5, mode === 'online' ? 'Contacting Cloud AI...' : 'Uploading PDF to engine...');
 
-  if (!STATE.serverOnline) {
-    // Simulate with demo data
-    setProgress(30, 'Parsing document...');
-    await sleep(400);
-    setProgress(60, 'Extracting courses...');
-    await sleep(500);
-    setProgress(90, 'Finalizing...');
-    await sleep(400);
-    setProgress(100, 'Done');
-    STATE.task1Result = DEMO_TASK1;
-    STATE.task2Result = DEMO_TASK2;
-    renderAll();
-    navigate('results');
-    if (task === '2') switchResultsTab('deep');
-    else switchResultsTab('courses');
-    toast('Demo results loaded (server offline)', 'success');
-    $('extract-progress').style.display = 'none';
-    $('btn-run').disabled = false;
-    return;
-  }
-
   try {
     const form = new FormData();
     form.append('pdf', STATE.pdfFile);
     if (task === '2' && course) form.append('course', course);
     if (debug) form.append('debug', '1');
-    if (hintsFile) form.append('hints', await hintsFile.text());
-    else if (STATE.hintsData) form.append('hints', JSON.stringify(STATE.hintsData));
+    let hintsData = null;
+    if (hintsFile) {
+      try {
+        hintsData = JSON.parse(await hintsFile.text());
+      } catch (_) {
+        throw new Error('Hints file must contain valid JSON');
+      }
+    } else if (STATE.hintsData) {
+      hintsData = { ...STATE.hintsData };
+    }
+    if (task === '2' && STATE.task1Result?.courses?.length) {
+      hintsData = hintsData || {};
+      if (!Array.isArray(hintsData.courses) || !hintsData.courses.length) {
+        hintsData.courses = STATE.task1Result.courses;
+      }
+    }
+    if (hintsData) form.append('hints', JSON.stringify(hintsData));
 
     form.append('mode', mode);
     if (mode === 'online') {
@@ -289,35 +370,35 @@ async function runExtraction() {
     });
 
     setProgress(70, 'Processing response...');
-    let data = await resp.json();
+    let data = await resp.json().catch(() => ({}));
 
-    if (data.error) {
-      if (mode === 'online' && SYLEX_CLOUD_AUTOFALLBACK) {
-        toast(`⚠️ Cloud AI failed: ${data.error}. Auto-falling back to Offline Engine...`, 'error');
+    if (!resp.ok || data.error) {
+      const requestError = data.error || `Extraction failed with HTTP ${resp.status}`;
+      if (mode === 'online' && SYLEX_CLOUD_AUTOFALLBACK && resp.status >= 500) {
+        toast(`Cloud processing failed. Retrying with the local engine: ${requestError}`, 'error');
         setProgress(30, 'Running local offline engine...');
         form.set('mode', 'offline');
         const fallbackResp = await fetch(STATE.serverUrl + '/api/extract', {
           method: 'POST', body: form,
           signal: AbortSignal.timeout(120000),
         });
-        data = await fallbackResp.json();
-        if (data.error) {
-          toast('❌ ' + data.error, 'error');
-          $('extract-progress').style.display = 'none';
-          $('btn-run').disabled = false;
+        data = await fallbackResp.json().catch(() => ({}));
+        if (!fallbackResp.ok || data.error) {
+          toast(data.error || `Extraction failed with HTTP ${fallbackResp.status}`, 'error');
           return;
         }
       } else {
-        toast('❌ ' + data.error, 'error');
-        $('extract-progress').style.display = 'none';
-        $('btn-run').disabled = false;
+        toast(requestError, 'error');
         return;
       }
     }
 
     setProgress(100, 'Complete!');
+    STATE.dataSource = 'document';
     if (task === '1') {
       STATE.task1Result = data;
+      STATE.task2Result = null;
+      STATE.courseCache = {};
       renderAll();
       navigate('results');
       switchResultsTab('courses');
@@ -327,7 +408,7 @@ async function runExtraction() {
       navigate('results');
       switchResultsTab('deep');
     }
-    toast(`✅ ${mode === 'online' ? 'Cloud AI' : 'Offline'} extraction complete`, 'success');
+    toast(`${mode === 'online' ? 'Cloud-assisted' : 'Local'} extraction complete`, 'success');
 
     // Update chat context
     const ctx = { task1: STATE.task1Result, task2: STATE.task2Result };
@@ -335,7 +416,7 @@ async function runExtraction() {
     updateContextPanel(ctx);
 
   } catch (e) {
-    toast('❌ ' + e.message, 'error');
+    toast(e.message, 'error');
   } finally {
     $('extract-progress').style.display = 'none';
     $('btn-run').disabled = false;
@@ -349,23 +430,41 @@ function setProgress(pct, label) {
   if (lbl)  lbl.textContent  = label;
 }
 
-function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
-
 // ── Demo loader ─────────────────────────────────────────────────────
 function loadDemo() {
+  if (typeof DEMO_TASK1 === 'undefined' || typeof DEMO_TASK2 === 'undefined') {
+    toast('Sample data is unavailable', 'error');
+    return;
+  }
   STATE.task1Result = DEMO_TASK1;
   STATE.task2Result = DEMO_TASK2;
+  STATE.dataSource = 'sample';
+  STATE.courseCache = {};
+  const sampleCourse = DEMO_TASK2?.course || {};
+  if (sampleCourse.code) STATE.courseCache[sampleCourse.code.trim().toUpperCase()] = DEMO_TASK2;
+  if (sampleCourse.title) STATE.courseCache[sampleCourse.title.trim().toUpperCase()] = DEMO_TASK2;
   renderAll();
   navigate('results');
   const ctx = { task1: DEMO_TASK1, task2: DEMO_TASK2 };
   CHAT.context = ctx;
   updateContextPanel(ctx);
-  toast('🎯 Demo results loaded', 'success');
+  toast('Sample analysis loaded', 'success');
 }
 window.loadDemo = loadDemo;
 
 // ── Render all results ──────────────────────────────────────────────
 function renderAll() {
+  const hasData = Boolean(STATE.task1Result || STATE.task2Result);
+  const emptyState = $('results-empty');
+  const resultsData = $('results-data');
+  const sourceBadge = $('results-source-badge');
+  if (emptyState) emptyState.hidden = hasData;
+  if (resultsData) resultsData.hidden = !hasData;
+  if (sourceBadge) {
+    sourceBadge.hidden = !hasData;
+    sourceBadge.textContent = STATE.dataSource === 'sample' ? 'Sample dataset' : 'Document extraction';
+    sourceBadge.className = `data-source-badge ${STATE.dataSource === 'sample' ? 'is-sample' : 'is-document'}`;
+  }
   renderStatsBar();
   renderCourseCards();
   renderTask2();
@@ -424,16 +523,18 @@ function renderCourseCards(filterText = '') {
   }
 
   filtered.forEach(c => {
-    const card = document.createElement('div');
+    const card = document.createElement('button');
+    card.type = 'button';
     card.className = 'course-card animate-in';
+    card.setAttribute('aria-label', `Open ${c.code || c.title || 'course'} details`);
     card.innerHTML = `
       <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px">
         <div class="course-card-code">${esc(c.code || '⊘ No Code')}</div>
-        <div class="course-card-page">📄 p. ${c.page}</div>
+        <div class="course-card-page">Page ${esc(c.page ?? '—')}</div>
       </div>
       <div class="course-card-title">${esc(c.title)}</div>
       <div style="margin-top:10px;display:flex;justify-content:flex-end">
-        <span style="font-size:0.75rem;color:var(--accent-cyan);font-weight:600">Deep Extract ⚡</span>
+        <span style="font-size:0.75rem;color:var(--accent-blue);font-weight:600">Open course →</span>
       </div>`;
     card.addEventListener('click', () => {
       loadTask2ForCourse(c);
@@ -449,17 +550,18 @@ function renderTask2Error(course, message) {
   if (metaCard) {
     metaCard.innerHTML = `
       <div style="padding:1.5rem;text-align:center">
-        <div style="font-size:1.75rem;margin-bottom:0.5rem">⚠️</div>
+        <div class="error-mark" aria-hidden="true">!</div>
         <div style="font-weight:700;color:var(--accent-red);font-size:1.05rem;margin-bottom:0.25rem">Extraction Issue</div>
         <div class="course-meta-title" style="font-size:0.95rem;color:var(--text-main);margin-bottom:0.25rem">${esc(course.title || codeOrTitle)}</div>
         <div class="course-meta-code" style="font-size:0.8rem;margin-bottom:0.75rem">${esc(course.code || '')}</div>
         <div style="font-size:0.78rem;color:var(--text-muted);margin:0 auto 1.25rem;max-width:340px;line-height:1.4">${esc(message || 'The server could not extract details for this course.')}</div>
         <div style="display:flex;gap:8px;justify-content:center">
-          <button class="btn btn-sm btn-primary" onclick="loadTask2ForCourse(${JSON.stringify(course).replace(/"/g, '&quot;')})">⚡ Try Again</button>
+          <button class="btn btn-sm btn-primary" id="btn-retry-task2">Try again</button>
           <button class="btn btn-sm btn-secondary" onclick="switchResultsTab('courses')">← Back to Courses</button>
         </div>
       </div>
     `;
+    $('btn-retry-task2')?.addEventListener('click', () => loadTask2ForCourse(course));
   }
   if ($('t2-units')) $('t2-units').innerHTML = `<div class="empty-pane">No units available. Click "Try Again" to retry.</div>`;
   if ($('t2-outcomes')) $('t2-outcomes').innerHTML = '<div class="empty-pane">No course outcomes extracted.</div>';
@@ -472,6 +574,7 @@ async function loadTask2ForCourse(course) {
   const codeOrTitle = course.code || course.title || '';
   if ($('course-input')) $('course-input').value = codeOrTitle;
   if ($('task-select')) $('task-select').value = '2';
+  syncTaskFields();
 
   // 1. In-memory Course Cache: Instant 0ms return if already extracted in this session
   STATE.courseCache = STATE.courseCache || {};
@@ -481,7 +584,7 @@ async function loadTask2ForCourse(course) {
     renderTask2();
     renderCurriculumAudit();
     switchResultsTab('deep');
-    toast(`⚡ Instant loaded ${codeOrTitle}`, 'success');
+    toast(`${codeOrTitle} loaded`, 'success');
     return;
   }
 
@@ -499,9 +602,9 @@ async function loadTask2ForCourse(course) {
     if (metaCard) {
       metaCard.innerHTML = `
         <div style="padding:2rem;text-align:center">
-          <div style="font-size:2rem;margin-bottom:0.75rem">⚡</div>
-          <div style="font-weight:700;color:var(--accent-cyan);font-size:1.05rem;margin-bottom:0.25rem">Deep Extracting ${esc(codeOrTitle)}</div>
-          <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:1rem">Targeting course syllabus — rapid extraction active</div>
+          <div class="loading-mark" aria-hidden="true"></div>
+          <div style="font-weight:700;color:var(--accent-blue);font-size:1.05rem;margin-bottom:0.25rem">Extracting ${esc(codeOrTitle)}</div>
+          <div style="font-size:0.8rem;color:var(--text-muted);margin-bottom:1rem">Processing the selected course syllabus</div>
           <div class="pipeline-progress-bar" style="max-width:260px;margin:0 auto"><div class="pipeline-progress-fill" style="width:75%"></div></div>
         </div>
       `;
@@ -514,7 +617,7 @@ async function loadTask2ForCourse(course) {
 
     const timeoutId = setTimeout(() => {
       try { abortCtrl.abort(); } catch(_) {}
-    }, 25000);
+    }, 60000);
 
     try {
       const form = new FormData();
@@ -538,10 +641,11 @@ async function loadTask2ForCourse(course) {
         signal: abortCtrl.signal,
       });
       clearTimeout(timeoutId);
-      const data = await resp.json();
-      if (data.error) {
-        toast('❌ ' + data.error, 'error');
-        renderTask2Error(course, data.error);
+      const data = await resp.json().catch(() => ({}));
+      if (!resp.ok || data.error) {
+        const message = data.error || `Extraction failed with HTTP ${resp.status}`;
+        toast(message, 'error');
+        renderTask2Error(course, message);
         return;
       }
       STATE.task2Result = data;
@@ -552,7 +656,7 @@ async function loadTask2ForCourse(course) {
 
       renderAll();
       switchResultsTab('deep');
-      toast(`✅ Extracted ${codeOrTitle}`, 'success');
+      toast(`Extracted ${codeOrTitle}`, 'success');
       const ctx = { task1: STATE.task1Result, task2: STATE.task2Result };
       CHAT.context = ctx;
       updateContextPanel(ctx);
@@ -560,11 +664,11 @@ async function loadTask2ForCourse(course) {
       clearTimeout(timeoutId);
       if (e.name === 'AbortError') {
         if (STATE.activeTask2AbortController === abortCtrl) {
-          toast('⏱️ Extraction timed out for ' + codeOrTitle, 'error');
-          renderTask2Error(course, 'Request timed out after 25s. You can click Try Again or switch to Offline mode.');
+          toast('Extraction timed out for ' + codeOrTitle, 'error');
+          renderTask2Error(course, 'Request timed out after 60s. You can click Try Again or switch to Offline mode.');
         }
       } else {
-        toast('❌ Extraction error: ' + e.message, 'error');
+        toast('Extraction error: ' + e.message, 'error');
         renderTask2Error(course, e.message);
       }
     } finally {
@@ -584,7 +688,7 @@ async function loadTask2ForCourse(course) {
         <div class="course-meta-title">${esc(course.title)}</div>
         <div class="course-meta-code">${esc(course.code || '⊘ No Code')}</div>
         <div style="margin-top:1.25rem">
-          <button class="btn btn-sm btn-primary" onclick="runExtraction()">⚡ Run Deep Extraction</button>
+          <button class="btn btn-sm btn-primary" onclick="runExtraction()">Run course extraction</button>
         </div>
       </div>
     `;
@@ -609,14 +713,14 @@ function renderTask2() {
     if (metaCard) {
       metaCard.innerHTML = `
         <div style="padding:1.5rem;text-align:center">
-          <div style="font-size:2.2rem;margin-bottom:0.5rem">⚠️</div>
+          <div class="error-mark" aria-hidden="true">!</div>
           <div style="font-weight:700;color:var(--accent-amber);font-size:1.1rem;margin-bottom:0.5rem">Course Not Found</div>
           <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:1rem">${esc(reason)}</div>
           <div style="font-size:0.8rem;color:var(--text-muted)">Check the course code or switch to the <b>Courses</b> tab to see all extracted courses.</div>
         </div>
       `;
     }
-    if ($('t2-units')) $('t2-units').innerHTML = `<div class="empty-pane">⚠️ ${esc(reason)}</div>`;
+    if ($('t2-units')) $('t2-units').innerHTML = `<div class="empty-pane">${esc(reason)}</div>`;
     if ($('t2-outcomes')) $('t2-outcomes').innerHTML = '<div class="empty-pane">No data</div>';
     if ($('t2-po')) $('t2-po').innerHTML = '<div class="empty-pane">No data</div>';
     if ($('t2-matrix')) $('t2-matrix').innerHTML = '<div class="empty-pane">No data</div>';
@@ -778,7 +882,7 @@ function renderTask2() {
       wrap.style.overflowX = 'auto';
       const table = document.createElement('table');
       table.className = 'books-table';
-      table.innerHTML = `<thead><tr><th>#</th><th>Kind</th><th>Title / Author</th><th>Publisher</th><th>Ed.</th><th>Year</th></tr></thead>`;
+      table.innerHTML = `<thead><tr><th>#</th><th>Kind</th><th>Title / Author</th><th>Publisher</th><th>Ed.</th><th>Year</th><th>Access</th></tr></thead>`;
       const tbody = document.createElement('tbody');
       books.forEach((b,i) => {
         const row = document.createElement('tr');
@@ -789,6 +893,15 @@ function renderTask2() {
           <td>${esc(b.publisher||'—')}</td>
           <td class="mono text-sm">${esc(b.edition||'—')}</td>
           <td class="mono text-sm">${b.year||'—'}</td>`;
+        const finderCell = document.createElement('td');
+        const finderButton = document.createElement('button');
+        finderButton.className = 'btn btn-ghost book-finder-table-action';
+        finderButton.type = 'button';
+        finderButton.textContent = 'Find access';
+        finderButton.disabled = !String(b.title || '').trim();
+        finderButton.addEventListener('click', () => window.openBookFinder?.(b));
+        finderCell.appendChild(finderButton);
+        row.appendChild(finderCell);
         tbody.appendChild(row);
       });
       table.appendChild(tbody);
@@ -841,8 +954,8 @@ function renderLedger() {
   const ne = d2?.not_extracted || [];
   if (!ne.length) {
     el.innerHTML = `<div class="ledger-item-ui ok">
-      <span>✅</span>
-      <span>All fields resolved — <code>not_extracted</code> ledger is empty. Zero honest failures.</span>
+      <span class="ledger-status">Resolved</span>
+      <span>All fields were resolved. The <code>not_extracted</code> ledger is empty.</span>
     </div>`;
     return;
   }
@@ -855,7 +968,7 @@ function renderLedger() {
     } else {
       text = esc(String(item));
     }
-    div.innerHTML = `<span>⚠️</span><span>${text}</span>`;
+    div.innerHTML = `<span class="ledger-status">Review</span><span>${text}</span>`;
     el.appendChild(div);
   });
 }
@@ -888,9 +1001,14 @@ function syntaxHL(json) {
 
 // ── Tab switching ────────────────────────────────────────────────────
 function switchResultsTab(tab) {
-  document.querySelectorAll('.results-tab:not(.t2-tab)').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.results-tab:not(.t2-tab)').forEach(t => {
+    t.classList.remove('active');
+    t.setAttribute('aria-selected', 'false');
+  });
   document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
-  document.querySelector(`[data-tab="${tab}"]`)?.classList.add('active');
+  const selectedTab = document.querySelector(`[data-tab="${tab}"]`);
+  selectedTab?.classList.add('active');
+  selectedTab?.setAttribute('aria-selected', 'true');
   $(`tab-${tab}`)?.classList.add('active');
   if (tab === 'audit') {
     renderCurriculumAudit();
@@ -898,9 +1016,14 @@ function switchResultsTab(tab) {
 }
 
 function switchT2Tab(tab) {
-  document.querySelectorAll('.t2-tab').forEach(t => t.classList.remove('active'));
+  document.querySelectorAll('.t2-tab').forEach(t => {
+    t.classList.remove('active');
+    t.setAttribute('aria-selected', 'false');
+  });
   document.querySelectorAll('.t2-pane').forEach(p => { p.classList.remove('active'); p.style.display='none'; });
-  document.querySelector(`[data-t2="${tab}"]`)?.classList.add('active');
+  const selectedTab = document.querySelector(`[data-t2="${tab}"]`);
+  selectedTab?.classList.add('active');
+  selectedTab?.setAttribute('aria-selected', 'true');
   const pane = $(`t2-${tab}`);
   if (pane) { pane.classList.add('active'); pane.style.display='block'; }
 }
@@ -909,7 +1032,7 @@ function switchT2Tab(tab) {
 function copyJSON(elId) {
   const el = $(elId);
   if (!el) return;
-  navigator.clipboard.writeText(el.textContent || '').then(() => toast('📋 Copied', 'success'));
+  navigator.clipboard.writeText(el.textContent || '').then(() => toast('Copied to clipboard', 'success'));
 }
 window.copyJSON = copyJSON;
 
@@ -917,12 +1040,8 @@ function downloadResult(task) {
   const data = task === 1 ? STATE.task1Result : STATE.task2Result;
   if (!data) { toast('No data to download', 'error'); return; }
   const blob = new Blob([JSON.stringify(data, null, 2)], {type:'application/json'});
-  const a    = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(blob),
-    download: `task${task}_output.json`,
-  });
-  a.click();
-  toast(`⬇ task${task}_output.json downloaded`, 'success');
+  downloadBlob(blob, `task${task}_output.json`);
+  toast(`task${task}_output.json downloaded`, 'success');
 }
 window.downloadResult = downloadResult;
 
@@ -961,7 +1080,7 @@ function copyMarkdownSyllabus() {
   md += `---\n\n`;
 
   // Units
-  md += `## 📚 Units & Topics\n\n`;
+  md += `## Units & Topics\n\n`;
   (d2.units || []).forEach(u => {
     md += `### Unit ${u.number}: ${u.title || 'Untitled'} (${u.hours || 0} Hours)\n`;
     if (u.text && u.text.trim()) {
@@ -975,7 +1094,7 @@ function copyMarkdownSyllabus() {
 
   // Course Outcomes
   if (d2.course_outcomes && d2.course_outcomes.length) {
-    md += `---\n\n## 🎯 Course Outcomes (COs)\n\n`;
+    md += `---\n\n## Course Outcomes (COs)\n\n`;
     d2.course_outcomes.forEach(co => {
       md += `- **${co.id}:** ${co.text} \`[Bloom: ${co.bloom || 'understand'} (${co.bloom_source || 'inferred'})]\`\n`;
     });
@@ -984,7 +1103,7 @@ function copyMarkdownSyllabus() {
 
   // Programme Outcomes
   if (d2.programme_outcomes && d2.programme_outcomes.length) {
-    md += `---\n\n## 🎓 Programme Outcomes (POs)\n\n`;
+    md += `---\n\n## Programme Outcomes (POs)\n\n`;
     d2.programme_outcomes.forEach(po => {
       md += `- **${po.id}:** ${po.text}\n`;
     });
@@ -1021,7 +1140,7 @@ function copyMarkdownSyllabus() {
   }
 
   navigator.clipboard.writeText(md).then(() => {
-    toast(`📋 Markdown syllabus for ${c.code || c.title} copied!`, 'success');
+    toast(`Markdown syllabus for ${c.code || c.title} copied`, 'success');
   });
 }
 window.copyMarkdownSyllabus = copyMarkdownSyllabus;
@@ -1038,18 +1157,14 @@ function exportMatrixCSV() {
   cos.forEach(co => Object.keys(matrix[co]).forEach(p => posSet.add(p)));
   const pos = Array.from(posSet).sort((a,b) => (parseInt(a.replace(/\D/g,''))||0) - (parseInt(b.replace(/\D/g,''))||0));
 
-  let csv = 'CO,' + pos.join(',') + '\n';
+  let csv = [csvCell('CO'), ...pos.map(csvCell)].join(',') + '\n';
   cos.forEach(co => {
     const row = [co, ...pos.map(p => matrix[co][p] || '')];
-    csv += row.map(v => `"${v}"`).join(',') + '\n';
+    csv += row.map(csvCell).join(',') + '\n';
   });
 
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(blob),
-    download: `${d2.course?.code || 'CO_PO'}_Articulation_Matrix.csv`
-  });
-  a.click();
+  downloadBlob(blob, `${d2.course?.code || 'CO_PO'}_Articulation_Matrix.csv`);
   toast('📊 CO-PO Matrix CSV downloaded!', 'success');
 }
 window.exportMatrixCSV = exportMatrixCSV;
@@ -1063,14 +1178,10 @@ function exportCoursesCSV() {
   }
   let csv = 'Code,Title,Page\n';
   courses.forEach(c => {
-    csv += `"${(c.code||'').replace(/"/g,'""')}","${(c.title||'').replace(/"/g,'""')}",${c.page || 1}\n`;
+    csv += [csvCell(c.code), csvCell(c.title), csvCell(c.page || 1)].join(',') + '\n';
   });
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(blob),
-    download: `${(d1.document || 'Courses').replace(/\.[^/.]+$/, '')}_Courses_List.csv`
-  });
-  a.click();
+  downloadBlob(blob, `${(d1.document || 'Courses').replace(/\.[^/.]+$/, '')}_Courses_List.csv`);
   toast('📊 Courses list CSV downloaded!', 'success');
 }
 window.exportCoursesCSV = exportCoursesCSV;
@@ -1105,7 +1216,10 @@ function toggleAdvanced() {
   if (!panel) return;
   const open = panel.style.display === 'block';
   panel.style.display = open ? 'none' : 'block';
-  if (toggle) toggle.innerHTML = `⚙ Advanced options ${open ? '▼' : '▲'}`;
+  if (toggle) {
+    toggle.textContent = open ? 'Advanced diagnostics' : 'Hide advanced diagnostics';
+    toggle.setAttribute('aria-expanded', String(!open));
+  }
 }
 window.toggleAdvanced = toggleAdvanced;
 
@@ -1137,7 +1251,7 @@ async function renderCurriculumAudit() {
       const resp = await fetch(STATE.serverUrl + '/api/curriculum-audit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(d2),
+        body: JSON.stringify({ task2: d2 }),
         signal: AbortSignal.timeout(4000)
       });
       if (resp.ok) {
@@ -1292,7 +1406,7 @@ async function renderCurriculumAudit() {
   if (unmappedEl) {
     if (mc.unmapped_pos && mc.unmapped_pos.length > 0) {
       unmappedEl.style.display = 'block';
-      unmappedEl.textContent = `⚠️ Unaddressed POs: ${mc.unmapped_pos.join(', ')}`;
+      unmappedEl.textContent = `Unaddressed POs: ${mc.unmapped_pos.join(', ')}`;
     } else {
       unmappedEl.style.display = 'none';
     }
@@ -1305,29 +1419,29 @@ async function renderCurriculumAudit() {
   const chkHours = $('chk-hours');
   if (chkHours) {
     chkHours.className = (hi.status === 'DISCREPANCY_FLAGGED') ? 'checklist-item warn' : 'checklist-item pass';
-    chkHours.querySelector('.check-icon').textContent = (hi.status === 'DISCREPANCY_FLAGGED') ? '⚠' : '✓';
+    chkHours.querySelector('.check-icon').textContent = (hi.status === 'DISCREPANCY_FLAGGED') ? '!' : '✓';
   }
   const chkBloom = $('chk-bloom');
   if (chkBloom) {
     chkBloom.className = (ba.nba_status === 'COMPLIANT_HIGH_RIGOR') ? 'checklist-item pass' : 'checklist-item warn';
-    chkBloom.querySelector('.check-icon').textContent = (ba.nba_status === 'COMPLIANT_HIGH_RIGOR') ? '✓' : '⚠';
+    chkBloom.querySelector('.check-icon').textContent = (ba.nba_status === 'COMPLIANT_HIGH_RIGOR') ? '✓' : '!';
   }
   const chkMatrix = $('chk-matrix');
   if (chkMatrix) {
     chkMatrix.className = (mc.total_mapped_cells > 0) ? 'checklist-item pass' : 'checklist-item warn';
-    chkMatrix.querySelector('.check-icon').textContent = (mc.total_mapped_cells > 0) ? '✓' : '⚠';
+    chkMatrix.querySelector('.check-icon').textContent = (mc.total_mapped_cells > 0) ? '✓' : '!';
   }
   const chkBooks = $('chk-books');
   if (chkBooks) {
     const hasBooks = (d2.books || []).length > 0;
     chkBooks.className = hasBooks ? 'checklist-item pass' : 'checklist-item warn';
-    chkBooks.querySelector('.check-icon').textContent = hasBooks ? '✓' : '⚠';
+    chkBooks.querySelector('.check-icon').textContent = hasBooks ? '✓' : '!';
   }
   const chkLedger = $('chk-ledger');
   if (chkLedger) {
     const cleanLedger = (d2.not_extracted || []).length === 0;
     chkLedger.className = cleanLedger ? 'checklist-item pass' : 'checklist-item warn';
-    chkLedger.querySelector('.check-icon').textContent = cleanLedger ? '✓' : '⚠';
+    chkLedger.querySelector('.check-icon').textContent = cleanLedger ? '✓' : '!';
   }
 }
 
@@ -1401,12 +1515,15 @@ let currentDossierHtml = '';
 async function openDossierModal() {
   const d2 = STATE.task2Result;
   if (!d2 || !d2.course) {
-    toast('⚠️ Please select or extract a course first', 'error');
+    toast('Select or extract a course first', 'error');
     return;
   }
   const modal = $('dossier-modal');
   const frame = $('dossier-preview-frame');
-  if (modal) modal.classList.add('open');
+  if (modal) {
+    modal.classList.add('open');
+    modal.setAttribute('aria-hidden', 'false');
+  }
 
   if (frame) {
     frame.srcdoc = '<!DOCTYPE html><html><body style="font-family:sans-serif;padding:2rem;text-align:center;color:#64748b;background:#fff">Generating comprehensive NBA Course Dossier...</body></html>';
@@ -1417,7 +1534,7 @@ async function openDossierModal() {
       const resp = await fetch(STATE.serverUrl + '/api/export-dossier', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ course_code: d2.course?.code, d2: d2 }),
+        body: JSON.stringify({ task2: d2 }),
         signal: AbortSignal.timeout(10000)
       });
       if (resp.ok) {
@@ -1435,7 +1552,9 @@ async function openDossierModal() {
 }
 
 function closeDossierModal() {
-  $('dossier-modal')?.classList.remove('open');
+  const modal = $('dossier-modal');
+  modal?.classList.remove('open');
+  modal?.setAttribute('aria-hidden', 'true');
   const frame = $('dossier-preview-frame');
   if (frame) frame.srcdoc = '';
 }
@@ -1444,7 +1563,7 @@ function printDossier() {
   if (!currentDossierHtml) return;
   const pWin = window.open('', '_blank');
   if (!pWin) {
-    toast('⚠️ Pop-up blocked, please allow pop-ups to print', 'error');
+    toast('Pop-up blocked. Allow pop-ups to print the dossier.', 'error');
     return;
   }
   pWin.document.write(currentDossierHtml);
@@ -1455,14 +1574,10 @@ function printDossier() {
 
 function downloadDossierHtml() {
   if (!currentDossierHtml) return;
-  const code = STATE.task2Result?.course?.code || 'Course';
+  const code = safeFilename(STATE.task2Result?.course?.code || 'Course');
   const blob = new Blob([currentDossierHtml], { type: 'text/html;charset=utf-8' });
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(blob),
-    download: `Course_Dossier_${code}.html`,
-  });
-  a.click();
-  toast(`⬇ Course_Dossier_${code}.html downloaded`, 'success');
+  downloadBlob(blob, `Course_Dossier_${code}.html`);
+  toast(`Course_Dossier_${code}.html downloaded`, 'success');
 }
 
 function buildClientDossierHtml(d2) {
@@ -1494,7 +1609,7 @@ function buildClientDossierHtml(d2) {
       <h3 style="border-bottom:1px solid #666;padding-bottom:4px;margin-top:20px">2. Course Syllabus &amp; Topic Plan</h3>
       ${units.map(u=>`
         <div style="margin-bottom:14px">
-          <div style="font-weight:bold;background:#fafafa;padding:6px;border:1px solid #eee">Unit ${u.unit}: ${esc(u.title)} (${u.hours||0} Hours)</div>
+          <div style="font-weight:bold;background:#fafafa;padding:6px;border:1px solid #eee">Unit ${u.number}: ${esc(u.title)} (${u.hours||0} Hours)</div>
           <ul style="margin:6px 0 0 20px;padding:0">
             ${(u.topics||[]).map(t=>`<li style="font-size:10pt;margin-bottom:3px">${esc(t.text)} <i style="color:#666">(${esc(t.bloom||'understand')})</i></li>`).join('')}
           </ul>
@@ -1516,7 +1631,7 @@ function openHintsStudio() {
 
   tbody.innerHTML = '';
   const d1 = STATE.task1Result;
-  const courses = (d1?.courses && d1.courses.length) ? d1.courses : [{ code: 'CS23301', title: 'DATA STRUCTURES', page: 12 }];
+  const courses = (d1?.courses && d1.courses.length) ? d1.courses : [{ code: '', title: '', page: 1 }];
 
   courses.forEach(c => {
     addHintRow({
@@ -1528,10 +1643,13 @@ function openHintsStudio() {
   });
 
   modal.classList.add('open');
+  modal.setAttribute('aria-hidden', 'false');
 }
 
 function closeHintsStudio() {
-  $('hints-modal')?.classList.remove('open');
+  const modal = $('hints-modal');
+  modal?.classList.remove('open');
+  modal?.setAttribute('aria-hidden', 'true');
 }
 
 function addHintRow(hint = {}) {
@@ -1557,7 +1675,7 @@ function getHintsFromTable() {
     const start_page = parseInt(r.querySelector('.hint-start')?.value || 1);
     const end_page = parseInt(r.querySelector('.hint-end')?.value || 2);
     if (code || title) {
-      courses.push({ code, title, start_page, end_page });
+      courses.push({ code, title, page: start_page, start_page, end_page });
     }
   });
   return { courses };
@@ -1566,19 +1684,15 @@ function getHintsFromTable() {
 function downloadHintsJSON() {
   const hints = getHintsFromTable();
   const blob = new Blob([JSON.stringify(hints, null, 2)], { type: 'application/json' });
-  const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(blob),
-    download: 'hints.json',
-  });
-  a.click();
-  toast('⬇ hints.json downloaded', 'success');
+  downloadBlob(blob, 'hints.json');
+  toast('hints.json downloaded', 'success');
 }
 
 async function applyHintsAndRun() {
   const hints = getHintsFromTable();
   STATE.hintsData = hints;
   closeHintsStudio();
-  toast('⚙ Hints applied to session. Ready for extraction.', 'success');
+  toast('Boundary hints applied. Ready for extraction.', 'success');
   runExtraction();
 }
 
@@ -1623,7 +1737,12 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Toggles
   document.querySelectorAll('.toggle').forEach(toggle => {
-    toggle.addEventListener('click', () => toggle.classList.toggle('on'));
+    toggle.addEventListener('click', () => {
+      const isOn = toggle.classList.toggle('on');
+      if (toggle.getAttribute('role') === 'switch') {
+        toggle.setAttribute('aria-checked', String(isOn));
+      }
+    });
   });
 
   initUpload();
@@ -1632,7 +1751,7 @@ document.addEventListener('DOMContentLoaded', () => {
   loadOnlineSettings();
 
   // Auto check server
-  checkServer();
+  checkServer(true);
 
   // Show first t2 pane
   const firstPane = document.querySelector('.t2-pane');
@@ -1646,5 +1765,21 @@ document.addEventListener('DOMContentLoaded', () => {
   if (typeof CHAT !== 'undefined') CHAT.context = initCtx;
   if (typeof updateContextPanel === 'function') updateContextPanel(initCtx);
 
-  navigate('home');
+  renderAll();
+
+  document.querySelectorAll('.modal-overlay').forEach(modal => {
+    modal.addEventListener('click', event => {
+      if (event.target !== modal) return;
+      if (modal.id === 'dossier-modal') closeDossierModal();
+      if (modal.id === 'hints-modal') closeHintsStudio();
+    });
+  });
+  document.addEventListener('keydown', event => {
+    if (event.key !== 'Escape') return;
+    if ($('dossier-modal')?.classList.contains('open')) closeDossierModal();
+    if ($('hints-modal')?.classList.contains('open')) closeHintsStudio();
+  });
+
+  const initialSection = window.location.hash.replace(/^#/, '');
+  navigate(['home', 'extract', 'results', 'books', 'finder', 'chat', 'settings'].includes(initialSection) ? initialSection : 'home');
 });

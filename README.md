@@ -84,24 +84,32 @@ python sylex_server.py --browser
 # Opens http://localhost:7823
 ```
 
-The web UI provides a visual dashboard for uploading PDFs, viewing extracted JSON, and an AI-powered curriculum advisor chat. It is entirely optional — the CLI is the primary evaluation interface.
+On Windows, if `python` is the Microsoft Store alias, use `py -3.12 run.py` instead.
+
+The web UI provides a professional workspace for uploading PDFs, reviewing extracted JSON, running curriculum audits, and using the curriculum assistant. It is entirely optional — the CLI is the primary evaluation interface.
+
+- **Local deterministic processing** is selected by default.
+- A service outage is shown clearly and never replaced with simulated extraction results.
+- The sample dataset is available only through the explicit **View sample analysis** action and is always labeled as sample data.
+- **Book Explorer** accepts a text-based book PDF, ranks pages for a topic or lesson search, and shows nearby source text with its nearest detected chapter or lesson. It also builds a clickable contents panel from printed chapter, unit, module, lesson, and numbered-section headings. Selecting any match or heading opens the complete original PDF at that page, so readers can scroll through all surrounding lessons and chapters; a separate link opens the same location in a new tab. The original PDF is kept in browser memory for previewing; the search endpoint receives the file for each query and keeps only a short-lived in-memory page-text index for repeated searches.
+- **Book Finder** scores up to 140 lawful catalog candidates per search (up to 100 from Open Library and 40 from Google Books), deduplicates editions, and ranks the best 24. Each result shows a transparent confidence percentage based on title, author, and catalog agreement, and it can import references extracted in Deep View. It shows only provider-authorized view, preview, borrow, catalog, and direct PDF links. A PDF download action is displayed only when Google Books or an Internet Archive item explicitly supplies that file; it never searches for unauthorized copies.
 
 ---
 
 ## 4. Vercel Cloud Deployment (Production Ready)
 
-This repository includes native Vercel Serverless configuration (`vercel.json` and `api/index.py`):
+This repository includes native Vercel Serverless configuration (`vercel.json` and the route handlers in `api/`):
 
 1. Push or import this repository to GitHub.
 2. Go to [Vercel](https://vercel.com/new) and click **Import** on this repository.
 3. Keep default settings (Framework Preset: **Other**, Root Directory: `./`).
 4. Click **Deploy**.
-   - **Static Frontend:** Global Edge CDN serving `index.html`, modern responsive UI, dark/light modes.
-   - **Serverless API:** Python Serverless Functions in `api/index.py` handling `/api/extract`, `/api/status`, `/api/chat`, and `/api/curriculum-audit`.
+   - **Static Frontend:** Global Edge CDN serving `index.html` and a responsive academic-quality workspace.
+   - **Serverless API:** Separate Python functions handle `/api/extract`, `/api/book-search`, `/api/book-page`, `/api/book-discovery`, `/api/status`, `/api/chat`, `/api/test-key`, `/api/curriculum-audit`, and `/api/export-dossier`.
 
 ---
 
-## 4. Extraction Approach
+## 5. Extraction Approach
 
 1. **PDF Parsing**: Dual-backend reading via PyMuPDF (primary) and pdfplumber (fallback). Extracts text, tables, and word positions per page.
 2. **Document Grammar Induction**: Learns the document's conventions at runtime — unit keyword (UNIT/MODULE/CHAPTER), dominant topic separator, TOC presence, matrix symbols.
@@ -112,7 +120,7 @@ This repository includes native Vercel Serverless configuration (`vercel.json` a
 
 ---
 
-## 5. Test Results
+## 6. Test Results
 
 Tested against multi-college, multi-format syllabus PDFs:
 
@@ -128,7 +136,7 @@ The engine is fully deterministic. Three runs on the same input produce byte-ide
 
 ---
 
-## 6. Honest List of Known Weaknesses
+## 7. Honest List of Known Weaknesses
 
 1. **Scanned/Image-only PDFs**: Pages without a text layer return empty strings. Logged in `not_extracted` with a note to install Tesseract. No OCR is attempted.
 2. **CO-PO Matrix in Images**: If the matrix is rendered as an image/screenshot rather than table/text, it cannot be extracted. Reported honestly in `not_extracted`.

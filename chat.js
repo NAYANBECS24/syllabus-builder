@@ -10,6 +10,8 @@ const CHAT = {
   history: [],      // Message history
 };
 
+const TRUSTED_HTML_PREFIX = '__SYLEX_TRUSTED_HTML__:';
+
 // ── Knowledge base ──────────────────────────────────────────────────
 const KB = {
   howToHints: `To provide manual hints for a difficult PDF, create a <code>hints.json</code> file:<br/>
@@ -65,62 +67,76 @@ const INTENTS = [
   {
     patterns: [/what.*(extract|found|result)/i, /what.*(pdf|document)/i],
     handler: handleWhatExtracted,
+    html: true,
   },
   {
     patterns: [/topic.*miss/i, /why.*topic/i, /miss.*topic/i],
     handler: () => KB.whyTopicsMissing,
+    html: true,
   },
   {
     patterns: [/matrix.*miss/i, /co.*po.*miss/i, /why.*matrix/i, /fix.*matrix/i],
     handler: () => KB.whyMatrixMissing,
-  },
-  {
-    patterns: [/bloom/i, /taxonomy/i, /k[1-6]/i, /bt[1-6]/i],
-    handler: () => KB.bloomLevels,
-  },
-  {
-    patterns: [/hint/i, /override/i, /manual/i, /hints\.json/i],
-    handler: () => KB.howToHints,
-  },
-  {
-    patterns: [/server/i, /localhost/i, /start server/i, /web ui/i],
-    handler: () => KB.howServer,
-  },
-  {
-    patterns: [/accura/i, /improve/i, /better/i, /tip/i],
-    handler: () => KB.accuracy,
-  },
-  {
-    patterns: [/not.extract/i, /fail/i, /ledger/i, /what.*wrong/i, /what.*fail/i],
-    handler: handleNotExtracted,
-  },
-  {
-    patterns: [/course.*found/i, /list.*course/i, /which.*course/i, /all course/i],
-    handler: handleListCourses,
+    html: true,
   },
   {
     patterns: [/bloom.*level/i, /show.*bloom/i, /bloom.*found/i, /bloom.*count/i],
     handler: handleBloomSummary,
+    html: true,
+  },
+  {
+    patterns: [/bloom/i, /taxonomy/i, /k[1-6]/i, /bt[1-6]/i],
+    handler: () => KB.bloomLevels,
+    html: true,
+  },
+  {
+    patterns: [/hint/i, /override/i, /manual/i, /hints\.json/i],
+    handler: () => KB.howToHints,
+    html: true,
+  },
+  {
+    patterns: [/server/i, /localhost/i, /start server/i, /web ui/i],
+    handler: () => KB.howServer,
+    html: true,
+  },
+  {
+    patterns: [/accura/i, /improve/i, /better/i, /tip/i],
+    handler: () => KB.accuracy,
+    html: true,
+  },
+  {
+    patterns: [/not.extract/i, /fail/i, /ledger/i, /what.*wrong/i, /what.*fail/i],
+    handler: handleNotExtracted,
+    html: true,
+  },
+  {
+    patterns: [/course.*found/i, /list.*course/i, /which.*course/i, /all course/i],
+    handler: handleListCourses,
+    html: true,
   },
   {
     patterns: [/unit/i, /module/i],
     handler: handleUnitSummary,
+    html: true,
   },
   {
     patterns: [/book/i, /reference/i, /text.*book/i],
     handler: handleBookSummary,
+    html: true,
   },
   {
     patterns: [/co\d|course.*outcome/i],
     handler: handleCOSummary,
+    html: true,
   },
   {
-    patterns: [/hi|hello|hey/i],
+    patterns: [/\b(?:hi|hello|hey)\b/i],
     handler: () => "Hello! Ready to help. Load an extraction result and ask me anything about it.",
   },
   {
     patterns: [/thank/i],
     handler: () => "You're welcome! Remember: <code>python sylex_server.py</code> to use the web UI. Good luck on evaluation day!",
+    html: true,
   },
 ];
 
@@ -131,7 +147,7 @@ function handleWhatExtracted() {
   const d2 = CHAT.context.task2;
   let reply = '';
   if (d1) {
-    reply += `<b>Task 1</b>: Found <b>${d1.course_count}</b> courses in <code>${d1.document}</code>.<br/>`;
+    reply += `<b>Task 1</b>: Found <b>${escHtml(d1.course_count)}</b> courses in <code>${escHtml(d1.document)}</code>.<br/>`;
   }
   if (d2 && d2.course) {
     const u = d2.units || [];
@@ -139,16 +155,16 @@ function handleWhatExtracted() {
     const cos = (d2.course_outcomes || []).length;
     const matrix_cells = Object.values(d2.co_po_matrix || {})
       .reduce((a, r) => a + Object.keys(r).length, 0);
-    reply += `<b>Task 2</b> — <b>${d2.course.code}: ${d2.course.title}</b><br/>`;
+    reply += `<b>Task 2</b> — <b>${escHtml(d2.course.code)}: ${escHtml(d2.course.title)}</b><br/>`;
     reply += `• ${u.length} units, ${topics} topics<br/>`;
     reply += `• ${cos} Course Outcomes<br/>`;
     reply += `• ${(d2.programme_outcomes||[]).length} Programme Outcomes<br/>`;
     reply += `• ${matrix_cells} CO-PO matrix cells<br/>`;
     reply += `• ${(d2.books||[]).length} books<br/>`;
     if ((d2.not_extracted||[]).length > 0) {
-      reply += `<br/>⚠️ <b>${d2.not_extracted.length} item(s)</b> not extracted — see the <i>not_extracted</i> tab or ask me.`;
+      reply += `<br/><b>${d2.not_extracted.length} item(s)</b> require review — see the <i>not_extracted</i> tab or ask me.`;
     } else {
-      reply += `<br/>✅ All fields extracted — <code>not_extracted</code> ledger is empty.`;
+      reply += `<br/>All fields were resolved — the <code>not_extracted</code> ledger is empty.`;
     }
   }
   return reply || noContext();
@@ -160,7 +176,7 @@ function handleNotExtracted() {
   if (!d2) return "Load a Task 2 result first.";
   const ne = d2.not_extracted || [];
   if (ne.length === 0) {
-    return "✅ Great news — the <code>not_extracted</code> ledger is empty! Everything was extracted successfully.";
+    return "The <code>not_extracted</code> ledger is empty. All available fields were resolved.";
   }
   let reply = `<b>${ne.length} item(s) not extracted:</b><ul>`;
   ne.forEach(item => { reply += `<li>${escHtml(item)}</li>`; });
@@ -177,7 +193,7 @@ function handleListCourses() {
   let reply = `<b>${courses.length} courses found:</b><table class="result-table">
     <tr><th>Code</th><th>Title</th><th>Page</th></tr>`;
   courses.forEach(c => {
-    reply += `<tr><td>${escHtml(c.code||'—')}</td><td>${escHtml(c.title)}</td><td>${c.page}</td></tr>`;
+    reply += `<tr><td>${escHtml(c.code||'—')}</td><td>${escHtml(c.title)}</td><td>${escHtml(c.page)}</td></tr>`;
   });
   reply += `</table>`;
   return reply;
@@ -209,8 +225,8 @@ function handleUnitSummary() {
   let reply = `<b>${units.length} units found:</b><table class="result-table">
     <tr><th>#</th><th>Title</th><th>Hours</th><th>Topics</th></tr>`;
   units.forEach(u => {
-    reply += `<tr><td>${u.number}</td><td>${escHtml(u.title||'—')}</td>
-      <td>${u.hours||'—'}</td><td>${(u.topics||[]).length}</td></tr>`;
+    reply += `<tr><td>${escHtml(u.number)}</td><td>${escHtml(u.title||'—')}</td>
+      <td>${escHtml(u.hours||'—')}</td><td>${(u.topics||[]).length}</td></tr>`;
   });
   reply += `</table>`;
   return reply;
@@ -223,7 +239,7 @@ function handleBookSummary() {
   let reply = `<b>${books.length} books extracted:</b><ul>`;
   books.forEach(b => {
     reply += `<li><b>[${escHtml(b.kind)}]</b> ${escHtml(b.title)} — ${escHtml(b.author)}`;
-    if (b.year) reply += ` (${b.year})`;
+    if (b.year) reply += ` (${escHtml(b.year)})`;
     reply += `</li>`;
   });
   reply += `</ul>`;
@@ -237,7 +253,7 @@ function handleCOSummary() {
   let reply = `<b>${cos.length} Course Outcomes:</b><table class="result-table">
     <tr><th>ID</th><th>Bloom</th><th>Source</th><th>Text (first 60 chars)</th></tr>`;
   cos.forEach(co => {
-    reply += `<tr><td>${co.id}</td><td>${co.bloom}</td><td>${co.bloom_source}</td>
+    reply += `<tr><td>${escHtml(co.id)}</td><td>${escHtml(co.bloom)}</td><td>${escHtml(co.bloom_source)}</td>
       <td>${escHtml((co.text||'').substring(0,60))}…</td></tr>`;
   });
   reply += `</table>`;
@@ -249,7 +265,12 @@ function noContext() {
 }
 
 function escHtml(s) {
-  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  return String(s ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
 }
 
 // ── Auto-analysis: produce suggestion cards from results ────────────
@@ -335,9 +356,10 @@ function updateContextPanel(ctx) {
   const d2 = ctx.task2;
   const summary = document.getElementById('context-summary');
   const status  = document.getElementById('context-status');
+  const hasContext = Boolean(d1 || d2);
   if (summary) {
-    summary.style.display = 'block';
-    status.style.display  = 'none';
+    summary.style.display = hasContext ? 'block' : 'none';
+    if (status) status.style.display = hasContext ? 'none' : 'block';
     const set = (id, val) => { const el = document.getElementById(id); if(el) el.textContent = val; };
     set('ctx-doc',     d1?.document || '—');
     set('ctx-courses', d1?.course_count ?? '—');
@@ -361,13 +383,20 @@ function updateContextPanel(ctx) {
     const chipsRow = document.getElementById('chat-chips');
     if (chipsRow) {
       const cTitle = d2.course.title || d2.course.code || 'Course';
-      chipsRow.innerHTML = `
-        <button class="chat-chip" onclick="sendQuick('Suggest 5 exam questions with Bloom taxonomy for ${escHtml(cTitle)}')">📝 5 Exam Questions</button>
-        <button class="chat-chip" onclick="sendQuick('Create a 45-hour lecture-by-lecture lesson plan for ${escHtml(cTitle)}')">📅 Lesson Plan</button>
-        <button class="chat-chip" onclick="sendQuick('How can I improve Bloom level alignment in ${escHtml(cTitle)}?')">🎯 Improve Bloom</button>
-        <button class="chat-chip" onclick="sendQuick('Recommend laboratory experiments and open-source tools for ${escHtml(cTitle)}')">🔬 Lab &amp; Tools</button>
-        <button class="chat-chip" onclick="sendQuick('Recommend top reference textbooks and online courses for ${escHtml(cTitle)}')">📚 Books &amp; MOOCs</button>
-      `;
+      const chips = [
+        ['5 exam questions', `Suggest 5 exam questions with Bloom taxonomy for ${cTitle}`],
+        ['Lesson plan', `Create a 45-hour lecture-by-lecture lesson plan for ${cTitle}`],
+        ['Improve Bloom alignment', `How can I improve Bloom level alignment in ${cTitle}?`],
+        ['Labs and tools', `Recommend laboratory experiments and open-source tools for ${cTitle}`],
+        ['Books and MOOCs', `Recommend top reference textbooks and online courses for ${cTitle}`],
+      ];
+      chipsRow.replaceChildren(...chips.map(([label, prompt]) => {
+        const button = document.createElement('button');
+        button.className = 'chat-chip';
+        button.textContent = label;
+        button.addEventListener('click', () => sendQuick(prompt));
+        return button;
+      }));
     }
   }
 
@@ -468,23 +497,25 @@ function updateChatModeUI(mode) {
 
   if (btnOn) btnOn.classList.toggle('active', isOnline);
   if (btnOff) btnOff.classList.toggle('active', !isOnline);
+  if (btnOn) btnOn.setAttribute('aria-pressed', String(isOnline));
+  if (btnOff) btnOff.setAttribute('aria-pressed', String(!isOnline));
 
   if (modePill) {
     if (isOnline) {
       modePill.className = 'chat-status-pill online';
-      modePill.textContent = '🌐 Cloud AI Active';
+      modePill.textContent = 'Cloud model';
     } else {
       modePill.className = 'chat-status-pill offline';
-      modePill.textContent = '⚡ Local Engine';
+      modePill.textContent = 'Offline rules';
     }
   }
 
   if (modeSub) {
     if (isOnline) {
       const cleanModel = model.replace('nvidia/', '').replace('z-ai/', '').replace('-instruct', '');
-      modeSub.textContent = `🌐 ${provider} · ${cleanModel} · OBE Curriculum Advisor & Exam Engine`;
+      modeSub.textContent = `${provider} · ${cleanModel} · OBE curriculum assistant`;
     } else {
-      modeSub.textContent = '⚡ Offline Engine · Deterministic Syllabus Rules & Invariants';
+      modeSub.textContent = 'Deterministic local curriculum rules';
     }
   }
 }
@@ -606,7 +637,11 @@ async function sendChat() {
   removeTyping();
   try {
     const localReply = respond(msg);
-    appendMsg(renderMarkdown(localReply), 'assistant', true, {
+    const isTrustedHtml = localReply.startsWith(TRUSTED_HTML_PREFIX);
+    const renderedReply = isTrustedHtml
+      ? localReply.slice(TRUSTED_HTML_PREFIX.length)
+      : renderMarkdown(localReply);
+    appendMsg(renderedReply, 'assistant', true, {
       model: 'local-offline-engine',
       provider: 'local'
     });
@@ -631,7 +666,7 @@ function respond(q) {
   for (const intent of INTENTS) {
     if (intent.patterns.some(p => p.test(q))) {
       const r = intent.handler();
-      if (r) return r;
+      if (r) return intent.html ? TRUSTED_HTML_PREFIX + r : r;
     }
   }
 
@@ -652,11 +687,11 @@ function respond(q) {
       if (targetUnit) {
         const topics = targetUnit.topics || [];
         const lines = [
-          `### 📖 **Unit ${targetUnit.number}: ${targetUnit.title}** (${targetUnit.hours || 9} Contact Hours)`,
+          `### Unit ${targetUnit.number}: ${targetUnit.title} (${targetUnit.hours || 9} Contact Hours)`,
           `*Course: ${course.code} - ${course.title}*\n`,
-          `#### 🎯 Unit Overview & Scope`,
+          `#### Unit Overview and Scope`,
           `This unit covers foundational and advanced principles of **${targetUnit.title}**. Total prescribed duration: **${targetUnit.hours || 9} lecture hours**.\n`,
-          `#### 📋 Granular Syllabus Topics & Bloom Levels`,
+          `#### Syllabus Topics and Bloom Levels`,
           `| # | Topic | Bloom Taxonomy Level | Expected Competency |`,
           `| :--- | :--- | :--- | :--- |`
         ];
@@ -669,10 +704,10 @@ function respond(q) {
           lines.push(`| **${i+1}** | \`${t.text}\` | **${bloomCap}** | ${comp} |`);
         });
 
-        lines.push(`\n#### 💡 Core Takeaways & Exam Focus`);
+        lines.push(`\n#### Core Takeaways and Assessment Focus`);
         lines.push(`- Ensure a solid conceptual grasp of: *${topics.slice(0, 3).map(t => t.text).join(', ')}*.`);
         lines.push(`- Expect both short theoretical questions (Bloom K1/K2) and algorithmic implementation/numerical problems (Bloom K3/K4).`);
-        lines.push(`\n💡 **Next Suggestions:**`);
+        lines.push(`\n**Suggested next steps:**`);
         lines.push(`1. *'Suggest 5 exam questions for Unit ${targetUnit.number}'*`);
         lines.push(`2. *'Provide a lecture-by-lecture lesson plan for Unit ${targetUnit.number}'*`);
         lines.push(`3. *'Explain the first topic in Unit ${targetUnit.number} in detail'*`);
@@ -685,21 +720,21 @@ function respond(q) {
     for (const u of units) {
       for (const t of (u.topics || [])) {
         if (t.text && qLower.includes(t.text.toLowerCase())) {
-          return `### 💡 Syllabus Topic: **${t.text}**
+          return `### Syllabus Topic: **${t.text}**
 - **Course**: \`${course.code} - ${course.title}\`
 - **Unit**: **Unit ${u.number}: ${u.title}** (${u.hours || 9} Hours)
 - **Bloom Taxonomy Level**: **${(t.bloom || 'understand').toUpperCase()}** (${t.bloom_source || 'inferred'})
 
-#### 🔍 Topic Breakdown & Engineering Context
+#### Topic Breakdown and Engineering Context
 \`${t.text}\` is a core component of **Unit ${u.number} (${u.title})**. It develops cognitive competency at the **${(t.bloom || 'understand').toUpperCase()}** level under the university outcome-based education (OBE) curriculum.
 
-#### 🛠️ Key Concepts to Master:
+#### Key Concepts to Master:
 1. **Mathematical / Structural Definition:** Understand underlying principles, memory models, and formal representations.
 2. **Operations & Invariants:** Insertion, deletion, search, traversal, and edge cases.
 3. **Complexity Profile:** Time complexity (best, average, worst) and auxiliary space complexity.
 4. **Curriculum Alignment:** Maps directly to Course Outcomes and university examinations.
 
-💡 **Next Suggestions:**
+**Suggested next steps:**
 1. *'Generate 2-mark and 16-mark exam questions on ${t.text}'*
 2. *'Explain ${t.text} with C/C++ implementation code'*
 3. *'What are the real-world applications of ${t.text}?'*`;
@@ -709,13 +744,13 @@ function respond(q) {
 
     // Assessment questions
     if (qLower.includes('exam') || qLower.includes('question') || qLower.includes('quiz') || qLower.includes('test')) {
-      const lines = [`### 📝 Recommended Assessment Questions for **${course.code} - ${course.title}**\n`];
+      const lines = [`### Recommended Assessment Questions for **${course.code} - ${course.title}**\n`];
       units.slice(0, 5).forEach((u, i) => {
         const tDesc = (u.topics || []).slice(0, 2).map(t => t.text).join(' & ') || u.title;
         lines.push(`**Q${i+1} (Unit ${u.number} — ${u.title} / Bloom: Apply [K3])**`);
         lines.push(`> Discuss the engineering principles of *${tDesc}*. Formulate an algorithm and trace its execution on a sample input.\n`);
       });
-      lines.push("💡 **Next Suggestions:**");
+      lines.push("**Suggested next steps:**");
       lines.push("1. *'Generate 45-hour lesson plan for this course'*");
       lines.push("2. *'Suggest lab experiments and practical tools'*");
       lines.push("3. *'Evaluate Bloom taxonomy alignment across outcomes'*");
@@ -724,7 +759,7 @@ function respond(q) {
 
     // Lesson plan
     if (qLower.includes('lesson') || qLower.includes('plan') || qLower.includes('lecture') || qLower.includes('schedule')) {
-      const lines = [`### 📅 45-Hour Lesson Plan for **${course.code} - ${course.title}**\n`];
+      const lines = [`### 45-Hour Lesson Plan for **${course.code} - ${course.title}**\n`];
       let totalH = 0;
       units.forEach(u => {
         const h = u.hours || 9;
@@ -735,7 +770,7 @@ function respond(q) {
         });
       });
       lines.push(`\n*Total Planned Hours:* **${totalH} Hours**`);
-      lines.push("\n💡 **Next Suggestions:**");
+      lines.push("\n**Suggested next steps:**");
       lines.push("1. *'Suggest active learning methods for Unit 2'*");
       lines.push("2. *'Generate quiz questions for Unit 1'*");
       return lines.join('\n');
@@ -744,34 +779,34 @@ function respond(q) {
     // Books and literature
     if (qLower.includes('book') || qLower.includes('reference') || qLower.includes('resource') || qLower.includes('reading')) {
       const books = d2.books || [];
-      const lines = [`### 📚 Reference Literature & Textbooks for **${course.code} - ${course.title}**\n`];
+      const lines = [`### Reference Literature and Textbooks for **${course.code} - ${course.title}**\n`];
       books.forEach(b => {
         lines.push(`- **[${(b.kind || 'Book').toUpperCase()}]** *${b.title}* by **${b.author || 'Author'}** (${b.publisher ? b.publisher + ', ' : ''}${b.year || 'Latest Edition'})`);
       });
-      lines.push("\n💡 **Next Suggestions:**");
+      lines.push("\n**Suggested next steps:**");
       lines.push("1. *'Which textbook is most suitable for beginners?'*");
       lines.push("2. *'Recommend online MOOC resources and NPTEL links'*");
       return lines.join('\n');
     }
 
-    return `### 🎓 Syllabus Intelligence: **${course.code} - ${course.title}**
+    return `### Syllabus Intelligence: **${course.code} - ${course.title}**
 
 - **Structure**: Category \`${course.category || 'Core'}\`, Credits \`${course.credits || 4}\`, L-T-P: \`${course.lecture || 3}-${course.tutorial || 0}-${course.practical || 0}\`
 - **Units**: **${(d2.units || []).length} units** with **${(d2.units || []).reduce((a,u)=>a+(u.topics||[]).length, 0)} granular topics**
 - **Course Outcomes**: **${(d2.course_outcomes || []).length} COs**
 - **Books**: **${(d2.books || []).length} prescribed references**
 
-💡 **Next Suggestions:**
+**Suggested next steps:**
 1. *'Explain Unit 1 in detail with examples'*
 2. *'Suggest 5 exam questions for this course'*
 3. *'Create a 45-hour lecture lesson plan'*`;
   }
 
-  return `### 🤖 SYLEX AI Assistant
+  return `### SYLEX Curriculum Assistant
 I can analyze your syllabus, explain any unit or topic in depth, generate exam questions, create lesson plans, and evaluate Bloom taxonomy.
-Load an extraction from the **Results** tab or upload a PDF in **Extract** to explore deep curriculum intelligence!
+Load an extraction from **Results** or upload a PDF in **Extract** to begin.
 
-💡 **Next Suggestions:**
+**Suggested next steps:**
 1. *'Explain Unit 1 in detail'*
 2. *'What was extracted from this PDF?'*
 3. *'Show me all Bloom levels found'*`;
@@ -784,7 +819,7 @@ function appendMsg(content, role, isHtml = false, meta = null) {
   div.className = `chat-msg ${role}`;
   const avatar = document.createElement('div');
   avatar.className = 'chat-avatar';
-  avatar.textContent = role === 'assistant' ? 'Ω' : 'U';
+  avatar.textContent = role === 'assistant' ? 'S' : 'U';
   const bubble = document.createElement('div');
   bubble.className = 'chat-bubble';
 
@@ -793,10 +828,10 @@ function appendMsg(content, role, isHtml = false, meta = null) {
     if (meta && meta.model && meta.model !== 'local-offline-engine') {
       const cleanM = String(meta.model).replace('nvidia/', '').replace('-instruct', '').toUpperCase();
       tag.className = 'chat-model-tag';
-      tag.innerHTML = `🌐 Cloud AI · ${cleanM}`;
+      tag.textContent = `Cloud model · ${cleanM}`;
     } else {
       tag.className = 'chat-model-tag offline';
-      tag.innerHTML = `⚡ Local Engine`;
+      tag.textContent = 'Offline rules';
     }
     bubble.appendChild(tag);
   }
@@ -819,7 +854,7 @@ function showTyping() {
   if (!messages) return;
   typingEl = document.createElement('div');
   typingEl.className = 'chat-msg assistant';
-  typingEl.innerHTML = `<div class="chat-avatar">Ω</div>
+  typingEl.innerHTML = `<div class="chat-avatar">S</div>
     <div class="chat-bubble chat-typing">
       <div class="typing-dot"></div>
       <div class="typing-dot"></div>
@@ -837,7 +872,7 @@ function clearChat() {
   const messages = document.getElementById('chat-messages');
   if (messages) messages.innerHTML = '';
   CHAT.history = [];
-  appendMsg('Chat cleared. Ask me anything about your extraction, request exam questions, or create lesson plans!', 'assistant', false);
+  appendMsg('Conversation cleared. Ask about the active extraction, request assessment questions, or create a lesson plan.', 'assistant', false);
 }
 
 // Export to global

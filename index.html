@@ -3,12 +3,13 @@
 <head>
   <meta charset="UTF-8"/>
   <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <title>SYLEX v3.0 — Autonomous Syllabus Extraction &amp; Curriculum Verification Engine</title>
-  <meta name="description" content="Offline-capable autonomous syllabus PDF parser and OBE curriculum verification system conforming to the 21 September 2026 specification."/>
+  <title>SYLEX — Syllabus Extraction and Curriculum Quality</title>
+  <meta name="description" content="Extract structured syllabus data, review curriculum quality, and prepare audit-ready academic records."/>
   <link rel="stylesheet" href="styles.css"/>
   <link rel="stylesheet" href="chat.css"/>
 </head>
 <body>
+<a class="skip-link" href="#section-home">Skip to main content</a>
 <div class="bg-aurora" aria-hidden="true"><div class="aurora-mid"></div></div>
 <div id="toast" role="status" aria-live="polite"></div>
 
@@ -16,7 +17,7 @@
 
 <!-- ══ NAVBAR ══ -->
 <nav class="navbar" role="navigation" aria-label="Main Navigation">
-  <a class="nav-brand" href="#" onclick="navigate('home');return false">
+  <a class="nav-brand" href="#home" onclick="navigate('home');return false" aria-label="SYLEX home">
     <div class="omega">
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
         <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
@@ -26,20 +27,22 @@
       </svg>
     </div>
     <div>
-      <div class="name">SYLEX <span style="font-weight:400;font-size:0.75rem;color:var(--text-muted);margin-left:4px">v3.0</span></div>
-      <div class="version">Curriculum Extraction &amp; Verification System</div>
+      <div class="name">SYLEX <span class="product-version">3.0</span></div>
+      <div class="version">Curriculum intelligence workspace</div>
     </div>
   </a>
 
-  <div class="nav-links" role="menubar">
-    <button class="nav-link active" data-nav="home">Overview</button>
+  <div class="nav-links" aria-label="Workspace sections">
+    <button class="nav-link active" data-nav="home" aria-current="page">Overview</button>
     <button class="nav-link" data-nav="extract">Extract</button>
     <button class="nav-link" data-nav="results">Results Explorer</button>
+    <button class="nav-link" data-nav="books">Book Explorer</button>
+    <button class="nav-link" data-nav="finder">Book Finder</button>
     <button class="nav-link" data-nav="chat">OBE Assistant</button>
     <button class="nav-link" data-nav="settings">Settings</button>
   </div>
 
-  <div style="display:flex;gap:8px;align-items:center">
+  <div class="nav-statuses" aria-label="System status">
     <div id="mode-badge" class="mode-nav-badge offline">
       <span class="dot"></span>
       <span id="mode-nav-label">Deterministic Local</span>
@@ -53,142 +56,64 @@
 
 <!-- ══════════════════════ HOME / OVERVIEW ══════════════════════ -->
 <section id="section-home" class="section active">
-<div class="hero">
-  <div class="hero-eyebrow">21 September 2026 Evaluation Standard · Pure Deterministic Core</div>
-  <h1 class="hero-title">
-    Autonomous Syllabus Extraction<br/>
-    <span class="omega-word">&amp; Curriculum Verification</span>
-  </h1>
-  <p class="hero-sub">
-    Industrial-strength document reconstruction for complex university syllabi.
-    Discovers document grammar at runtime, parses course boundaries, topics, Bloom taxonomy levels,
-    and CO-PO articulation matrices word-for-word into verifiable JSON schemas with zero hallucinations.
-  </p>
+<div class="home-shell">
+  <div class="hero-grid">
+    <div class="hero-copy">
+      <div class="hero-eyebrow">Academic quality operations</div>
+      <h1 class="hero-title">Turn syllabus PDFs into <span class="omega-word">audit-ready curriculum data.</span></h1>
+      <p class="hero-sub">Extract course structures, outcomes, Bloom levels, and CO–PO mappings into reviewable records. Every result stays linked to the source and unresolved content is reported explicitly.</p>
+      <div class="hero-cta">
+        <button class="btn btn-primary btn-lg" onclick="navigate('extract')">Start an extraction</button>
+        <button class="btn btn-secondary btn-lg" onclick="loadDemo()">View sample analysis</button>
+      </div>
+      <div class="hero-assurances" aria-label="Product assurances">
+        <span>Local-first processing</span>
+        <span>Structured JSON export</span>
+        <span>Traceable exceptions</span>
+      </div>
+    </div>
 
-  <div class="hero-cta">
-    <button class="btn btn-primary" onclick="navigate('extract')">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-        <polyline points="17 8 12 3 7 8"/>
-        <line x1="12" y1="3" x2="12" y2="15"/>
-      </svg>
-      Extract Syllabus PDF
-    </button>
-    <button class="btn btn-secondary" onclick="loadDemo()">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <polygon points="5 3 19 12 5 21 5 3"/>
-      </svg>
-      Inspect Reference Benchmark
-    </button>
-    <button class="btn btn-ghost" onclick="navigate('chat')">
-      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-      </svg>
-      Curriculum Advisor
-    </button>
+    <aside class="workflow-card" aria-label="Extraction workflow">
+      <div class="workflow-card-header">
+        <div>
+          <div class="eyebrow-label">Standard workflow</div>
+          <h2>From source to review</h2>
+        </div>
+        <span class="status-pill status-pill--ready">Ready</span>
+      </div>
+      <ol class="workflow-list">
+        <li><span>01</span><div><strong>Ingest</strong><small>Validate and read the syllabus PDF</small></div></li>
+        <li><span>02</span><div><strong>Structure</strong><small>Detect courses, units, and document boundaries</small></div></li>
+        <li><span>03</span><div><strong>Extract</strong><small>Capture outcomes, topics, books, and mappings</small></div></li>
+        <li><span>04</span><div><strong>Verify</strong><small>Reconcile quality checks and unresolved regions</small></div></li>
+        <li><span>05</span><div><strong>Export</strong><small>Deliver JSON, CSV, and accreditation dossiers</small></div></li>
+      </ol>
+    </aside>
   </div>
 
-  <!-- Pipeline architecture strip -->
-  <div style="margin:2.5rem auto 0;max-width:820px;padding:12px 18px;background:var(--bg-card);border:1px solid var(--border-subtle);border-radius:var(--radius-md);display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;font-family:var(--font-mono);font-size:0.75rem">
-    <span style="color:var(--text-muted);font-weight:600">PIPELINE:</span>
-    <span style="color:var(--text-secondary)">Triage</span>
-    <span style="color:var(--border-mid)">→</span>
-    <span style="color:var(--accent-blue)">Grammar Induction</span>
-    <span style="color:var(--border-mid)">→</span>
-    <span style="color:var(--accent-cyan)">Segmentation</span>
-    <span style="color:var(--border-mid)">→</span>
-    <span style="color:var(--accent-green)">Deep Extract</span>
-    <span style="color:var(--border-mid)">→</span>
-    <span style="color:var(--accent-amber)">Consensus Gate</span>
-    <span style="color:var(--border-mid)">→</span>
-    <span style="color:var(--text-primary);font-weight:600">JSON Schema</span>
+  <div class="capability-grid" aria-label="Core capabilities">
+    <article class="capability-card"><div class="capability-kicker">01 · Extraction</div><h2>Structured by design</h2><p>Converts complex academic documents into predictable course, unit, outcome, and bibliography schemas.</p></article>
+    <article class="capability-card"><div class="capability-kicker">02 · Assurance</div><h2>Reviewable, not opaque</h2><p>Surfaces source pages, quality metrics, and a dedicated ledger for content that cannot be resolved safely.</p></article>
+    <article class="capability-card"><div class="capability-kicker">03 · Delivery</div><h2>Built for academic teams</h2><p>Supports curriculum review, OBE analysis, accreditation evidence, and downstream system integration.</p></article>
   </div>
 
-  <!-- Feature grid -->
-  <div class="hero-features" style="margin-top:2.5rem">
-    <div class="hero-feature-card">
-      <div class="feature-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-blue)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <circle cx="12" cy="12" r="3"/>
-          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-        </svg>
-      </div>
-      <div class="feature-title">Document Grammar Induction</div>
-      <div class="feature-desc">Learns layout typography, unit keywords, code styles, and matrix symbol sets at runtime directly from document structure.</div>
-    </div>
-
-    <div class="hero-feature-card">
-      <div class="feature-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <polyline points="4 7 4 4 20 4 20 7"/>
-          <line x1="9" y1="20" x2="15" y2="20"/>
-          <line x1="12" y1="4" x2="12" y2="20"/>
-        </svg>
-      </div>
-      <div class="feature-title">Lossless Topic Segmentation</div>
-      <div class="feature-desc">Hierarchical 7-strategy delimiter cascade with closed-world source reconstruction invariants for 100% complete coverage.</div>
-    </div>
-
-    <div class="hero-feature-card">
-      <div class="feature-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-green)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 2v20"/>
-          <path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/>
-        </svg>
-      </div>
-      <div class="feature-title">Bloom Cognitive Taxonomy</div>
-      <div class="feature-desc">Extracts explicit printed markers (K1–K6, BT1–BT6) as printed, backed by a 40+ cognitive action-verb classifier.</div>
-    </div>
-
-    <div class="hero-feature-card">
-      <div class="feature-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-amber)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2" ry="2"/>
-          <line x1="3" y1="9" x2="21" y2="9"/>
-          <line x1="3" y1="15" x2="21" y2="15"/>
-          <line x1="9" y1="3" x2="9" y2="21"/>
-          <line x1="15" y1="3" x2="15" y2="21"/>
-        </svg>
-      </div>
-      <div class="feature-title">CO-PO Matrix Alignment</div>
-      <div class="feature-desc">Dual-backend table fusion stitches multi-page matrices, aligns PO headers, and preserves source symbols (S/M/L, 1/2/3).</div>
-    </div>
-
-    <div class="hero-feature-card">
-      <div class="feature-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-2.5-2.5Z"/>
-        </svg>
-      </div>
-      <div class="feature-title">Grounded Bibliographic Parser</div>
-      <div class="feature-desc">Right-to-left slot decomposition isolates title, author, edition, publisher, and publication year without hallucinations.</div>
-    </div>
-
-    <div class="hero-feature-card">
-      <div class="feature-icon">
-        <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="var(--accent-red)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
-        </svg>
-      </div>
-      <div class="feature-title">Honest not_extracted Ledger</div>
-      <div class="feature-desc">Auditable accounting of absent or unresolvable document regions to guarantee that evaluated outputs never fabricate data.</div>
-    </div>
-  </div>
+  <div class="home-footnote">Designed for registrars, curriculum committees, accreditation teams, and academic quality offices.</div>
 </div>
 </section>
 
 <!-- ══════════════════════ EXTRACT ══════════════════════ -->
 <section id="section-extract" class="section">
-<div style="max-width:880px;margin:0 auto;padding:3rem 2rem">
-  <div class="upload-header">
-    <h1 class="section-title">Document Ingestion &amp; Extraction</h1>
-    <p class="section-sub">Upload any academic syllabus PDF for evaluation-compliant parsing.</p>
+<div class="page-container page-container--narrow">
+  <div class="page-header upload-header">
+    <div class="eyebrow-label">New extraction</div>
+    <h1 class="section-title">Process a syllabus document</h1>
+    <p class="section-sub">Upload a text-based academic PDF, choose the processing mode, and review the structured output before export.</p>
   </div>
 
   <!-- Server status bar -->
   <div id="server-status-bar" class="server-bar offline">
     <span id="server-status-icon">●</span>
-    <span id="server-status-text">Local server offline — using browser demo sandbox</span>
+    <span id="server-status-text">Checking the extraction service…</span>
     <button class="btn btn-sm btn-ghost" onclick="checkServer()">Check Server</button>
   </div>
 
@@ -202,12 +127,12 @@
         <line x1="9" y1="15" x2="15" y2="15"/>
       </svg>
     </div>
-    <div class="drop-title">Select or drag &amp; drop syllabus PDF</div>
-    <div class="drop-sub">Accepts vector-native, complex multi-column, and tabular PDFs</div>
+    <div class="drop-title">Drop a syllabus PDF here</div>
+    <div class="drop-sub">or select a file from your computer</div>
     <div class="drop-formats">
-      <span class="format-tag">.pdf</span>
-      <span class="format-tag">PyMuPDF Native</span>
-      <span class="format-tag">pdfplumber Fusion</span>
+      <span class="format-tag">PDF only</span>
+      <span class="format-tag">Maximum 50 MB</span>
+      <span class="format-tag">Text-based documents</span>
     </div>
     <input type="file" id="file-input" accept=".pdf" style="display:none"/>
   </div>
@@ -230,10 +155,10 @@
   <!-- Mode Selector -->
   <div style="margin-top:2rem">
     <div style="font-size:0.75rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-secondary);margin-bottom:0.75rem">
-      Engine Execution Mode
+      Processing mode
     </div>
     <div class="mode-cards-grid">
-      <div class="mode-card active" id="mode-card-offline" onclick="setMode('offline')">
+      <button type="button" class="mode-card active" id="mode-card-offline" aria-pressed="true">
         <div class="mode-card-header">
           <div class="mode-badge-icon offline">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -244,15 +169,15 @@
           </div>
           <div class="mode-radio"><span class="radio-dot"></span></div>
         </div>
-        <div class="mode-card-title">Deterministic Engine (Local Rules)</div>
-        <div class="mode-card-desc">100% offline, zero external calls, exact schema compliance. Primary evaluated standard.</div>
+        <div class="mode-card-title">Local deterministic</div>
+        <div class="mode-card-desc">Processes the document with the local rules engine. No model request is made.</div>
         <div class="mode-card-features">
-          <span class="m-feat">Deterministic Replay</span>
-          <span class="m-feat">Clean Machine Ready</span>
+          <span class="m-feat">Private by default</span>
+          <span class="m-feat">Repeatable output</span>
         </div>
-      </div>
+      </button>
 
-      <div class="mode-card online-mode" id="mode-card-online" onclick="setMode('online')">
+      <button type="button" class="mode-card online-mode" id="mode-card-online" aria-pressed="false">
         <div class="mode-card-header">
           <div class="mode-badge-icon online">
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -263,13 +188,13 @@
           </div>
           <div class="mode-radio"><span class="radio-dot"></span></div>
         </div>
-        <div class="mode-card-title">Cloud AI Accelerated (Multimodal LLM)</div>
-        <div class="mode-card-desc">Deep semantic tie-breaking via NVIDIA Nemotron / Gemini / OpenAI with automatic offline fallback.</div>
+        <div class="mode-card-title">Cloud-assisted</div>
+        <div class="mode-card-desc">Uses the configured model for semantic disambiguation, with local fallback when available.</div>
         <div class="mode-card-features">
-          <span class="m-feat">Semantic Disambiguation</span>
-          <span class="m-feat">Auto-Fallback Protected</span>
+          <span class="m-feat">Semantic review</span>
+          <span class="m-feat">Local fallback</span>
         </div>
-      </div>
+      </button>
     </div>
   </div>
 
@@ -284,31 +209,31 @@
   <!-- Options Grid -->
   <div class="options-grid" style="margin-top:1.5rem">
     <div class="option-group">
-      <label>Evaluation Task</label>
+      <label for="task-select">Extraction scope</label>
       <select id="task-select" class="select-input">
-        <option value="1">Task 1 — Course Inventory &amp; Mapping</option>
-        <option value="2">Task 2 — Deep Course Extraction</option>
+        <option value="1">Course catalog</option>
+        <option value="2">Single-course detail</option>
       </select>
     </div>
     <div class="option-group">
-      <label>Target Course Identifier (Task 2)</label>
+      <label for="course-input">Course identifier</label>
       <input type="text" id="course-input" class="text-input" placeholder="e.g. CS23301 or DATA STRUCTURES"/>
     </div>
     <div class="option-group">
-      <label>Hints Override File (Optional)</label>
+      <label for="hints-input">Boundary hints <span class="label-optional">Optional</span></label>
       <input type="file" id="hints-input" accept=".json" class="text-input" style="padding:8px"/>
     </div>
   </div>
 
   <!-- Advanced options -->
   <div style="margin-top:1rem">
-    <button class="btn btn-sm btn-ghost" onclick="toggleAdvanced()" id="adv-toggle">
-      ⚙ Advanced Diagnostics
+    <button class="btn btn-sm btn-ghost" onclick="toggleAdvanced()" id="adv-toggle" aria-expanded="false" aria-controls="adv-panel">
+      Advanced diagnostics
     </button>
     <div id="adv-panel" style="display:none;margin-top:0.75rem;padding:1rem;background:var(--bg-glass);border:1px solid var(--border-subtle);border-radius:var(--radius-md)">
       <div class="toggle-row">
         <span style="font-size:0.82rem;color:var(--text-secondary)">Include _debug diagnostic metadata in output</span>
-        <button class="toggle" id="debug-toggle" onclick="this.classList.toggle('on')"></button>
+        <button class="toggle" id="debug-toggle" type="button" role="switch" aria-checked="false" aria-label="Include debug metadata"></button>
       </div>
       <div style="margin-top:0.75rem;font-size:0.75rem;color:var(--text-muted);font-family:var(--font-mono)">
         Hints schema: {"courses": [{"code": "CS23301", "title": "DATA STRUCTURES", "page": 41}]}
@@ -318,7 +243,7 @@
 
   <!-- Run Button -->
   <div class="run-area">
-    <button id="btn-run" class="btn-run" disabled>Execute Extraction</button>
+    <button id="btn-run" class="btn-run" disabled>Run extraction</button>
   </div>
 
   <!-- Progress bar -->
@@ -328,10 +253,12 @@
   </div>
 
   <!-- CLI Command Reference -->
-  <div style="margin-top:2.5rem;padding:1.5rem;background:var(--bg-surface);border:1px solid var(--border-subtle);border-radius:var(--radius-lg)">
+  <details class="cli-reference">
+    <summary>Command-line reference</summary>
+    <div class="cli-reference-body">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:0.75rem">
-      <div style="font-size:0.7rem;font-weight:700;text-transform:uppercase;letter-spacing:0.08em;color:var(--text-muted)">Evaluation CLI Commands (Direct Terminal Execution)</div>
-      <span style="font-size:0.7rem;color:var(--accent-green);font-family:var(--font-mono)">Exit 0 = Valid JSON</span>
+      <div class="eyebrow-label">Direct execution</div>
+      <span class="cli-success">Exit 0 returns valid JSON</span>
     </div>
     <pre class="cli-block"># Task 1 — Course count and catalog
 python sylex.py --pdf syllabus.pdf
@@ -344,13 +271,27 @@ python sylex.py --pdf syllabus.pdf --course CS23301 --out task2_result.json
 
 # Launch Local Web UI
 python run.py</pre>
-  </div>
+    </div>
+  </details>
 </div>
 </section>
 
 <!-- ══════════════════════ RESULTS EXPLORER ══════════════════════ -->
 <section id="section-results" class="section">
-<div style="max-width:1400px;margin:0 auto;padding:2rem">
+<div class="page-container page-container--wide">
+  <div class="page-header page-header--row">
+    <div><div class="eyebrow-label">Analysis workspace</div><h1 class="section-title">Extraction results</h1><p class="section-sub">Review structured data, quality checks, and export-ready records.</p></div>
+    <div class="page-header-actions"><span id="results-source-badge" class="data-source-badge" hidden></span><button class="btn btn-secondary" onclick="navigate('extract')">New extraction</button></div>
+  </div>
+
+  <div id="results-empty" class="empty-state">
+    <div class="empty-state-icon" aria-hidden="true">S</div>
+    <h2>No extraction loaded</h2>
+    <p>Process a syllabus PDF to populate this workspace, or open the sample dataset to explore the review tools.</p>
+    <div class="empty-state-actions"><button class="btn btn-primary" onclick="navigate('extract')">Process a document</button><button class="btn btn-secondary" onclick="loadDemo()">Open sample data</button></div>
+  </div>
+
+  <div id="results-data" hidden>
 
   <!-- Stats KPI Banner -->
   <div class="stats-banner" id="stats-banner"></div>
@@ -360,8 +301,8 @@ python run.py</pre>
     <details class="ai-thought-details" open style="padding:1rem 1.25rem">
       <summary style="display:flex;align-items:center;justify-content:space-between;cursor:pointer;list-style:none">
         <div style="display:flex;align-items:center;gap:10px">
-          <span style="font-weight:700;color:var(--text-accent);font-size:0.88rem">Multimodal Cognitive Reasoning Trace</span>
-          <span class="m-feat" id="ai-latency-badge" style="font-size:0.7rem">Cognitive Flow</span>
+          <span style="font-weight:700;color:var(--text-accent);font-size:0.88rem">Model reasoning summary</span>
+          <span class="m-feat" id="ai-latency-badge" style="font-size:0.7rem">Cloud analysis</span>
         </div>
         <span style="font-size:0.75rem;color:var(--text-muted)">Toggle trace</span>
       </summary>
@@ -370,14 +311,14 @@ python run.py</pre>
   </div>
 
   <!-- Primary Results Tabs -->
-  <div class="results-tabs" role="tablist">
-    <button class="results-tab active" data-tab="courses">Courses Catalog (Task 1)</button>
-    <button class="results-tab" data-tab="deep">Course Inspector (Task 2)</button>
-    <button class="results-tab" data-tab="audit">Curriculum Audit &amp; OBE</button>
-    <button class="results-tab" data-tab="json1">Task 1 JSON</button>
-    <button class="results-tab" data-tab="json2">Task 2 JSON</button>
-    <button class="results-tab" data-tab="bloom">Bloom Analytics</button>
-    <button class="results-tab" data-tab="ledger">not_extracted Ledger</button>
+  <div class="results-tabs" role="tablist" aria-label="Result views">
+    <button class="results-tab active" data-tab="courses" role="tab" aria-selected="true">Courses</button>
+    <button class="results-tab" data-tab="deep" role="tab" aria-selected="false">Course detail</button>
+    <button class="results-tab" data-tab="audit" role="tab" aria-selected="false">Quality audit</button>
+    <button class="results-tab" data-tab="json1" role="tab" aria-selected="false">Catalog JSON</button>
+    <button class="results-tab" data-tab="json2" role="tab" aria-selected="false">Course JSON</button>
+    <button class="results-tab" data-tab="bloom" role="tab" aria-selected="false">Bloom analysis</button>
+    <button class="results-tab" data-tab="ledger" role="tab" aria-selected="false">Exception ledger</button>
   </div>
 
   <!-- Courses Tab (Task 1) -->
@@ -404,8 +345,8 @@ python run.py</pre>
         <span>Verified Course Inspector</span>
       </span>
       <div style="display:flex;gap:8px;flex-wrap:wrap">
-        <button class="btn btn-sm btn-ghost" onclick="openDossierModal()" title="Export complete NBA/NAAC Course Dossier file">📑 Course Dossier</button>
-        <button class="btn btn-sm btn-ghost" onclick="openHintsStudio()" title="Interactive visual boundaries override tool">⚙️ Hints Studio</button>
+        <button class="btn btn-sm btn-ghost" onclick="openDossierModal()" title="Export complete NBA/NAAC Course Dossier file">Course dossier</button>
+        <button class="btn btn-sm btn-ghost" onclick="openHintsStudio()" title="Interactive visual boundaries override tool">Boundary hints</button>
         <button class="btn btn-sm btn-ghost" onclick="copyMarkdownSyllabus()" title="Copy entire course syllabus in Markdown format">Copy Markdown</button>
         <button class="btn btn-sm btn-ghost" onclick="exportMatrixCSV()" title="Export CO-PO Articulation Matrix as CSV for Accreditation">Export Matrix CSV</button>
         <button class="btn btn-sm btn-ghost" onclick="printSyllabus()" title="Clean print layout or save to PDF">Print / PDF</button>
@@ -420,11 +361,11 @@ python run.py</pre>
       </div>
       <div>
         <div style="display:flex;gap:4px;margin-bottom:1.5rem;border-bottom:1px solid var(--border-subtle);flex-wrap:wrap">
-          <button class="results-tab t2-tab active" data-t2="units">Units &amp; Topics</button>
-          <button class="results-tab t2-tab" data-t2="outcomes">Course Outcomes (CO)</button>
-          <button class="results-tab t2-tab" data-t2="po">Programme Outcomes (PO)</button>
-          <button class="results-tab t2-tab" data-t2="matrix">CO-PO Matrix</button>
-          <button class="results-tab t2-tab" data-t2="books">Prescribed Books</button>
+          <button class="results-tab t2-tab active" data-t2="units" aria-selected="true">Units &amp; Topics</button>
+          <button class="results-tab t2-tab" data-t2="outcomes" aria-selected="false">Course Outcomes (CO)</button>
+          <button class="results-tab t2-tab" data-t2="po" aria-selected="false">Programme Outcomes (PO)</button>
+          <button class="results-tab t2-tab" data-t2="matrix" aria-selected="false">CO-PO Matrix</button>
+          <button class="results-tab t2-tab" data-t2="books" aria-selected="false">Prescribed Books</button>
         </div>
         <div id="t2-units"    class="t2-pane active"><div class="empty-pane">No data loaded yet</div></div>
         <div id="t2-outcomes" class="t2-pane"><div class="empty-pane">No data loaded yet</div></div>
@@ -492,7 +433,7 @@ python run.py</pre>
             <div style="font-size:0.72rem;color:var(--text-secondary);text-transform:uppercase">Curriculum Health</div>
             <div id="audit-health-score" style="font-size:1.75rem;font-weight:800;font-family:var(--font-mono);color:var(--accent-green)">—</div>
           </div>
-          <button class="btn btn-sm btn-primary" onclick="openDossierModal()">📑 Generate Full Dossier</button>
+          <button class="btn btn-sm btn-primary" onclick="openDossierModal()">Generate dossier</button>
         </div>
       </div>
 
@@ -583,6 +524,171 @@ python run.py</pre>
     </div>
   </div>
 
+</div><!-- /results-data -->
+</div>
+</section>
+
+<!-- ══════════════════════ BOOK EXPLORER ══════════════════════ -->
+<section id="section-books" class="section">
+<div class="page-container page-container--wide">
+  <header class="page-header page-header--row book-page-header">
+    <div>
+      <div class="eyebrow-label">Book Explorer</div>
+      <h1 class="section-title">Find any topic in a book PDF</h1>
+      <p class="section-sub">Upload a textbook, search a topic or lesson name, then open the matching PDF page directly from the result.</p>
+    </div>
+    <div class="book-privacy-note" role="note">Source preview stays in this browser</div>
+  </header>
+
+  <div class="book-workspace">
+    <aside class="book-search-panel" aria-label="Book topic search">
+      <div class="book-step-label">01 · Select a book</div>
+      <div id="book-drop-zone" class="book-drop-zone" role="button" tabindex="0" aria-controls="book-file-input" aria-label="Choose a book PDF">
+        <svg aria-hidden="true" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><path d="M14 2v6h6"/><path d="M12 18v-6"/><path d="m9.5 14.5 2.5-2.5 2.5 2.5"/></svg>
+        <strong>Upload book PDF</strong>
+        <span>Drag a text-based PDF here or browse your device</span>
+        <small>Up to 50 MB · searchable PDF recommended</small>
+      </div>
+      <input id="book-file-input" type="file" accept=".pdf,application/pdf" hidden/>
+
+      <div id="book-file-chosen" class="book-file-chosen" hidden>
+        <div class="book-file-icon" aria-hidden="true">PDF</div>
+        <div class="book-file-summary"><strong id="book-file-name">—</strong><span id="book-file-meta">—</span></div>
+        <button id="book-clear-file" class="btn btn-icon btn-ghost" type="button" aria-label="Remove selected book">×</button>
+      </div>
+
+      <form id="book-search-form" class="book-search-form" novalidate>
+        <div class="book-step-label">02 · Search a topic</div>
+        <label for="book-query">Topic, chapter, lesson, or keyword</label>
+        <div class="book-query-control">
+          <input id="book-query" type="search" maxlength="160" placeholder="e.g. Binary search tree" autocomplete="off" disabled/>
+          <button id="book-search-button" class="btn btn-primary" type="submit" disabled>Search</button>
+        </div>
+        <p class="book-field-help">Results include the PDF page, matching terms, and nearby text for quick verification.</p>
+      </form>
+
+      <div class="book-suggestion-row" aria-label="Example searches">
+        <span>Try</span>
+        <button type="button" data-book-query="introduction">Introduction</button>
+        <button type="button" data-book-query="learning outcomes">Learning outcomes</button>
+        <button type="button" data-book-query="chapter summary">Chapter summary</button>
+      </div>
+
+      <div class="book-results-header">
+        <div><strong>Matching pages</strong><span id="book-results-count">Upload a book to begin</span></div>
+        <span id="book-search-status" class="book-search-status" aria-live="polite"></span>
+      </div>
+      <div id="book-search-results" class="book-results-list" aria-live="polite">
+        <div class="book-results-empty">
+          <strong>Search results will appear here.</strong>
+          <span>Select a result to open the full book at that source page.</span>
+        </div>
+      </div>
+
+      <div class="book-outline-header">
+        <div><strong>Book contents</strong><span id="book-outline-count">Search a book to detect headings</span></div>
+      </div>
+      <div id="book-outline-list" class="book-outline-list" aria-live="polite">
+        <div class="book-outline-empty">Detected chapters, units, lessons, and numbered sections appear here.</div>
+      </div>
+    </aside>
+
+    <section class="book-viewer-panel" aria-labelledby="book-viewer-title">
+      <div class="book-viewer-toolbar">
+        <div><div class="book-step-label">03 · Read in source</div><h2 id="book-viewer-title">Full book reader</h2></div>
+        <div class="book-viewer-actions">
+          <span id="book-active-page" class="book-active-page">No page selected</span>
+          <a id="book-open-full-book" class="book-open-full-book" href="#" target="_blank" rel="noopener" hidden>Open in new tab ↗</a>
+        </div>
+      </div>
+      <div id="book-viewer-empty" class="book-viewer-empty">
+        <div class="book-viewer-empty-icon" aria-hidden="true">⌕</div>
+        <h3>Read the full book from the right page</h3>
+        <p>Choose a topic, chapter, unit, or lesson. The complete PDF opens at that page so you can scroll through all surrounding content.</p>
+      </div>
+      <div id="book-viewer-stage" class="book-viewer-stage" hidden>
+        <iframe id="book-pdf-viewer" title="Full book PDF reader" loading="lazy"></iframe>
+        <div id="book-viewer-loading" class="book-viewer-loading" hidden role="status" aria-live="polite"><span></span><strong>Opening full book…</strong></div>
+      </div>
+    </section>
+  </div>
+</div>
+</section>
+
+<!-- ══════════════════════ BOOK FINDER ══════════════════════ -->
+<section id="section-finder" class="section">
+<div class="page-container page-container--wide">
+  <header class="page-header page-header--row finder-page-header">
+    <div>
+      <div class="eyebrow-label">Book Finder</div>
+      <h1 class="section-title">Find the right edition and lawful access</h1>
+      <p class="section-sub">Search public book catalogs by title and author. Compare the closest edition with alternatives, then open, preview, borrow, or download a PDF only when the provider explicitly makes one available.</p>
+    </div>
+    <div class="finder-trust-note" role="note">Public catalogs · provider-authorized links only</div>
+  </header>
+
+  <div class="finder-workspace">
+    <aside class="finder-search-panel" aria-label="Book discovery search">
+      <div class="book-step-label">01 · Describe the book</div>
+      <form id="finder-search-form" class="finder-search-form" novalidate>
+        <label for="finder-title">Book title <span aria-hidden="true">*</span></label>
+        <input id="finder-title" type="search" maxlength="180" placeholder="e.g. Introduction to Algorithms" autocomplete="off" required/>
+        <label for="finder-author">Author <span class="finder-optional">Optional, improves matching</span></label>
+        <input id="finder-author" type="search" maxlength="160" placeholder="e.g. Thomas H. Cormen" autocomplete="off"/>
+        <button id="finder-search-button" class="btn btn-primary finder-search-button" type="submit">Find books</button>
+      </form>
+
+      <div class="finder-import-card">
+        <div class="finder-import-copy">
+          <strong>Import a syllabus reference</strong>
+          <span>Use books detected in the active course’s Deep View.</span>
+        </div>
+        <button id="finder-load-references" class="btn btn-secondary btn-sm" type="button">Load references</button>
+        <label class="sr-only" for="finder-reference-select">Extracted syllabus reference</label>
+        <select id="finder-reference-select" disabled>
+          <option value="">No references loaded</option>
+        </select>
+        <button id="finder-use-reference" class="btn btn-ghost btn-sm" type="button" disabled>Use selected reference</button>
+        <p id="finder-import-status" class="finder-import-status" aria-live="polite">Run a Deep View extraction to import its textbook and reference list.</p>
+      </div>
+
+      <div class="finder-guidance">
+        <strong>What you get</strong>
+        <ul>
+          <li>Up to 140 lawful catalog candidates scored per search</li>
+          <li>Transparent title, author, and catalog-verification confidence</li>
+          <li>Other editions and related results when exact access is unavailable</li>
+          <li>View, preview, borrow, and provider-authorized PDF links</li>
+        </ul>
+      </div>
+    </aside>
+
+    <section class="finder-results-panel" aria-labelledby="finder-results-title">
+      <div class="finder-results-toolbar">
+        <div>
+          <div class="book-step-label">02 · Verify and access</div>
+          <h2 id="finder-results-title">Catalog matches</h2>
+          <p id="finder-results-summary">Search by title, then use the author to narrow the edition.</p>
+        </div>
+        <div class="finder-results-meta">
+          <span id="finder-provider-status" class="finder-provider-status" aria-live="polite">Waiting for a search</span>
+          <div id="finder-coverage" class="finder-coverage" hidden>
+            <span>Catalog coverage</span>
+            <strong id="finder-coverage-value">—</strong>
+            <small id="finder-coverage-detail">—</small>
+          </div>
+        </div>
+      </div>
+      <div id="finder-results" class="finder-results" aria-live="polite">
+        <div class="finder-empty-state">
+          <div class="finder-empty-icon" aria-hidden="true">⌕</div>
+          <strong>Search a book to compare trusted sources.</strong>
+          <span>Results combine public Open Library and Google Books catalog records. Legal PDF downloads appear only when a provider supplies a direct PDF.</span>
+        </div>
+      </div>
+      <footer id="finder-legal-note" class="finder-legal-note">Availability depends on the provider, book edition, and your region. This finder does not link to unauthorized copies.</footer>
+    </section>
+  </div>
 </div>
 </section>
 
@@ -632,23 +738,23 @@ python run.py</pre>
   </div>
 
   <!-- Right: Conversation Hub -->
-  <div>
+  <div class="chat-main">
     <div class="chat-header">
       <div style="display:flex;align-items:center;gap:12px;flex-wrap:wrap">
         <div>
           <div style="font-weight:700;font-size:1.05rem;display:flex;align-items:center;gap:8px">
             <span>Curriculum Analysis Assistant</span>
-            <span id="chat-mode-pill" class="chat-status-pill online">Cloud Model Active</span>
+            <span id="chat-mode-pill" class="chat-status-pill offline">Offline rules</span>
           </div>
           <div id="chat-mode-subtitle" style="font-size:0.75rem;color:var(--text-muted)">Outcome-Based Education (OBE) &amp; Accreditation Assistant</div>
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
         <div class="chat-mode-switch" role="group" aria-label="Assistant Engine Mode">
-          <button type="button" id="btn-chatmode-online" class="chat-mode-btn active" onclick="toggleChatMode('online')" title="Switch to Cloud Model">
+          <button type="button" id="btn-chatmode-online" class="chat-mode-btn" onclick="toggleChatMode('online')" title="Switch to Cloud Model" aria-pressed="false">
             Cloud
           </button>
-          <button type="button" id="btn-chatmode-offline" class="chat-mode-btn" onclick="toggleChatMode('offline')" title="Switch to Offline Engine">
+          <button type="button" id="btn-chatmode-offline" class="chat-mode-btn active" onclick="toggleChatMode('offline')" title="Switch to Offline Engine" aria-pressed="true">
             Offline Rules
           </button>
         </div>
@@ -658,7 +764,7 @@ python run.py</pre>
 
     <div class="chat-messages" id="chat-messages">
       <div class="chat-msg assistant">
-        <div class="chat-avatar">Ω</div>
+        <div class="chat-avatar">S</div>
         <div class="chat-bubble">
           <p><b>Welcome to the SYLEX Curriculum Assistant.</b> I analyze syllabus structure, cognitive learning actions, and accreditation mappings.</p>
           <p>You can ask for:</p>
@@ -694,9 +800,8 @@ python run.py</pre>
 
 <!-- ══════════════════════ SETTINGS ══════════════════════ -->
 <section id="section-settings" class="section">
-<div style="max-width:920px;margin:0 auto;padding:2rem">
-  <h1 class="section-title">Engine Configuration</h1>
-  <p class="section-sub">Zero college-specific parameters. Completely document-agnostic extraction rules.</p>
+<div class="page-container">
+  <div class="page-header"><div class="eyebrow-label">Administration</div><h1 class="section-title">Workspace settings</h1><p class="section-sub">Manage the extraction service, cloud model, and document boundary overrides.</p></div>
 
   <div class="settings-grid">
     <div class="settings-group">
@@ -746,32 +851,27 @@ python run.py</pre>
 
     <div class="settings-group">
       <div class="settings-group-title">Active Extraction Rules</div>
-      <div class="toggle-row"><span>Dual-backend table fusion (PyMuPDF + pdfplumber)</span>
-        <button class="toggle on"></button></div>
-      <div class="toggle-row"><span>Printed Bloom marker detection (K1–K6, BT1–BT6)</span>
-        <button class="toggle on"></button></div>
-      <div class="toggle-row"><span>Multi-page articulation matrix stitching</span>
-        <button class="toggle on"></button></div>
-      <div class="toggle-row"><span>Document-wide Programme Outcome search</span>
-        <button class="toggle on"></button></div>
-      <div class="toggle-row"><span>Closed-world topic reconstruction invariant</span>
-        <button class="toggle on"></button></div>
+      <div class="toggle-row"><span>Dual-backend table fusion (PyMuPDF + pdfplumber)</span><span class="rule-status">Enabled</span></div>
+      <div class="toggle-row"><span>Printed Bloom marker detection (K1–K6, BT1–BT6)</span><span class="rule-status">Enabled</span></div>
+      <div class="toggle-row"><span>Multi-page articulation matrix stitching</span><span class="rule-status">Enabled</span></div>
+      <div class="toggle-row"><span>Document-wide Programme Outcome search</span><span class="rule-status">Enabled</span></div>
+      <div class="toggle-row"><span>Closed-world topic reconstruction invariant</span><span class="rule-status">Enabled</span></div>
     </div>
 
     <div class="settings-group">
-      <div class="settings-group-title">Specification Compliance</div>
+      <div class="settings-group-title">Runtime and output contract</div>
       <div style="font-size:0.82rem;color:var(--text-secondary);line-height:1.8">
         <b>Specification:</b> 21 September 2026 Evaluation Standard<br/>
-        <b>Architecture:</b> SYLEX-ΩX v2.2 Deterministic &amp; Dual-Mode Hardened<br/>
+        <b>Architecture:</b> Deterministic local extraction with optional cloud assistance<br/>
         <b>Core Dependencies:</b> PyMuPDF, pdfplumber (Python 3.8+)<br/>
         <b>Evaluation Command:</b> <code>python sylex.py --pdf &lt;path&gt;</code><br/>
-        <b>Compliance:</b> 100% Offline, Strict Schema Valid, Zero Invented Fields
+        <b>Output policy:</b> Strict schemas with unresolved content recorded in the exception ledger
       </div>
       <div style="margin-top:1rem;display:flex;flex-wrap:wrap;gap:6px">
         <span class="format-tag">Document-Agnostic</span>
         <span class="format-tag">Exact Sourcing</span>
-        <span class="format-tag">No Hallucinations</span>
-        <span class="format-tag">Deterministic Hash</span>
+        <span class="format-tag">Exception Ledger</span>
+        <span class="format-tag">Content Hashing</span>
       </div>
     </div>
   </div>
@@ -784,21 +884,21 @@ python run.py</pre>
 <!-- ══════════════════════ MODALS ══════════════════════ -->
 
 <!-- Course Dossier Modal -->
-<div id="dossier-modal" class="modal-overlay">
+<div id="dossier-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="dossier-modal-title" aria-hidden="true">
   <div class="modal-container" style="max-width:1000px">
     <div class="modal-header">
       <div class="modal-title">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-purple)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
-        <span>Accreditation Course Dossier Preview</span>
+        <span id="dossier-modal-title">Accreditation course dossier</span>
       </div>
-      <button class="btn btn-sm btn-ghost" onclick="closeDossierModal()">✕</button>
+      <button class="btn btn-sm btn-ghost" onclick="closeDossierModal()" aria-label="Close dossier preview">Close</button>
     </div>
     <div class="modal-body">
       <div style="margin-bottom:0.75rem;display:flex;justify-content:space-between;align-items:center;font-size:0.8rem;color:var(--text-secondary)">
         <span>Standard OBE / NBA Institutional Course Master File</span>
         <span style="font-family:var(--font-mono);color:var(--accent-cyan)">Print-Ready Academic Format</span>
       </div>
-      <iframe id="dossier-preview-frame" title="Course Dossier Preview" style="width:100%;height:65vh;border:1px solid var(--border-mid);border-radius:var(--radius-sm);background:#ffffff;"></iframe>
+      <iframe id="dossier-preview-frame" title="Course Dossier Preview" sandbox style="width:100%;height:65vh;border:1px solid var(--border-mid);border-radius:var(--radius-sm);background:#ffffff;"></iframe>
     </div>
     <div class="modal-footer">
       <button class="btn btn-sm btn-ghost" onclick="downloadDossierHtml()">Download HTML</button>
@@ -809,14 +909,14 @@ python run.py</pre>
 </div>
 
 <!-- Hints Studio Modal -->
-<div id="hints-modal" class="modal-overlay">
+<div id="hints-modal" class="modal-overlay" role="dialog" aria-modal="true" aria-labelledby="hints-modal-title" aria-hidden="true">
   <div class="modal-container" style="max-width:780px">
     <div class="modal-header">
       <div class="modal-title">
         <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--accent-cyan)" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
-        <span>Hints Studio — Boundary Overrides</span>
+        <span id="hints-modal-title">Course boundary hints</span>
       </div>
-      <button class="btn btn-sm btn-ghost" onclick="closeHintsStudio()">✕</button>
+      <button class="btn btn-sm btn-ghost" onclick="closeHintsStudio()" aria-label="Close boundary hints">Close</button>
     </div>
     <div class="modal-body">
       <div style="font-size:0.82rem;color:var(--text-secondary);margin-bottom:1rem">
@@ -848,6 +948,8 @@ python run.py</pre>
 
 <script src="demo-data.js"></script>
 <script src="app.js"></script>
+<script src="book.js"></script>
+<script src="book-finder.js"></script>
 <script src="chat.js"></script>
 </body>
 </html>

@@ -26,10 +26,7 @@ SERVER   = os.path.join(BASE_DIR, "sylex_server.py")
 def find_python():
     candidates = [
         sys.executable,
-        "python", "python3",
-        r"C:\Users\nayan\AppData\Local\Programs\Python\Python312\python.exe",
-        r"C:\Users\nayan\AppData\Local\Programs\Python\Python313\python.exe",
-        r"C:\Users\nayan\AppData\Local\Programs\Python\Python315\python.exe",
+        "python", "python3", "py",
     ]
     for c in candidates:
         try:
@@ -131,7 +128,10 @@ Examples:
     print()
     print("  Ctrl+C to stop the server.")
     print()
-    subprocess.run([PY, SERVER, "--browser"])
+    server_cmd = [PY, SERVER]
+    if not args.server:
+        server_cmd.append("--browser")
+    subprocess.run(server_cmd)
 
 if __name__ == "__main__":
     main()

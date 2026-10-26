@@ -9,13 +9,13 @@ Hints:   python sylex.py --pdf syllabus.pdf --hints hints.json
 Debug:   python sylex.py --pdf syllabus.pdf --debug
 """
 
-import argparse, json, re, sys, os, hashlib, unicodedata, warnings, urllib, urllib.request
+import argparse, json, re, sys, os, hashlib, unicodedata, warnings, urllib, urllib.request, threading
 os.environ["PYMUPDF_SUGGEST_LAYOUT_ANALYZER"] = "0"
 warnings.filterwarnings("ignore")
 
 from pathlib  import Path
 from typing   import Optional, List, Dict, Tuple, Any
-from collections import defaultdict, Counter
+from collections import defaultdict, Counter, OrderedDict
 
 # ── PDF libraries ──────────────────────────────────────────────────────
 try:
@@ -38,6 +38,10 @@ except ImportError:
 if not HAS_PDFPLUMBER and not HAS_FITZ:
     print("ERROR: pip install pdfplumber PyMuPDF", file=sys.stderr)
     sys.exit(4)
+
+
+class PDFReadError(RuntimeError):
+    """Raised when a PDF cannot be found or parsed."""
 
 # ══════════════════════════════════════════════════════════════════════
 #  SIGNAL PATTERNS  (generic — zero college specifics)
@@ -306,8 +310,7 @@ class PDFReader:
 
     def _load(self):
         if not os.path.isfile(self.path):
-            print(f"ERROR: File not found: {self.path}", file=sys.stderr)
-            sys.exit(2)
+            raise PDFReadError(f"File not found: {self.path}")
         # SHA-256
         h = hashlib.sha256()
         with open(self.path,'rb') as f:
@@ -338,8 +341,7 @@ class PDFReader:
                     is_scanned = len(text.strip()) < 50 and len(words) < 10
                     self.pages.append(PageInfo(i, text, tables, words, is_scanned))
         except Exception as e:
-            print(f"ERROR reading PDF: {e}", file=sys.stderr)
-            sys.exit(2)
+            raise PDFReadError(f"Could not read PDF: {e}") from e
 
     def _load_fitz(self):
         try:
@@ -352,8 +354,20 @@ class PDFReader:
                 self.pages.append(PageInfo(i, text, [], words, is_scanned))
             doc.close()
         except Exception as e:
-            print(f"ERROR reading PDF: {e}", file=sys.stderr)
-            sys.exit(2)
+            raise PDFReadError(f"Could not read PDF: {e}") from e
+
+    def close(self):
+        for attr in ('_fitz_doc', '_plumber_doc'):
+            document = getattr(self, attr, None)
+            if document is not None:
+                try:
+                    document.close()
+                except Exception:
+                    pass
+                setattr(self, attr, None)
+
+    def __del__(self):
+        self.close()
 
     @property
     def page_count(self): return len(self.pages)
@@ -599,13 +613,12 @@ class CourseDetector:
                             if sum(c.isalpha() for c in nxt) > len(nxt) * 0.4:
                                 title_lines.append(nxt)
                                 if len(title_lines) >= 2: break
-                        if is_valid_course_code(raw_code) and len(raw_title) > 3:
-                                    cleaned_t = clean_title(title_lines)
-                                    if cleaned_t and len(cleaned_t) > 3:
-                                        norm = normalize_id(code_cand)
-                                        # Dedup by code alone
-                                        if norm not in curriculum_candidates:
-                                            curriculum_candidates[norm] = CourseCandidate(code_cand, cleaned_t, pg.number, 0.85, ["curriculum-table"])
+                        if title_lines:
+                            cleaned_t = clean_title(title_lines)
+                            if cleaned_t and len(cleaned_t) > 3:
+                                norm = normalize_id(code_cand)
+                                if norm not in curriculum_candidates:
+                                    curriculum_candidates[norm] = CourseCandidate(code_cand, cleaned_t, pg.number, 0.85, ["curriculum-table"])
 
             # 3. Curriculum Scheme from structured tables
             if is_multi_course_page or pg.number <= 25:
@@ -676,7 +689,10 @@ class CourseDetector:
             for hc in self.hints["courses"]:
                 code  = hc.get("code","")
                 title = hc.get("title","")
-                page  = hc.get("page", 1)
+                try:
+                    page = max(1, int(hc.get("start_page") or hc.get("page") or 1))
+                except (TypeError, ValueError):
+                    page = 1
                 norm  = normalize_id(code)
                 found = next((c for c in result if codes_match(c.code, code)), None)
                 if found:
@@ -1914,24 +1930,42 @@ def _load_hints(path: Optional[str]) -> Dict:
         print(f"WARNING: Could not load hints: {e}", file=sys.stderr)
         return {}
 
-_GLOBAL_COURSE_DETECTOR_CACHE: Dict[str, List['CourseCandidate']] = {}
+_COURSE_CACHE_MAX_ITEMS = 32
+_GLOBAL_COURSE_DETECTOR_CACHE = OrderedDict()
+_GLOBAL_COURSE_DETECTOR_CACHE_LOCK = threading.Lock()
 
-def _get_doc_cache_key(reader: 'PDFReader', pdf_path: str = "") -> str:
-    n_pages = reader.page_count
-    first_text = reader.pages[0].text[:300] if n_pages > 0 else ""
-    return f"{n_pages}_{hash(first_text)}_{Path(pdf_path).name}"
+def _get_doc_cache_key(reader: 'PDFReader', hints: Dict = None) -> str:
+    try:
+        hints_json = json.dumps(hints or {}, sort_keys=True, ensure_ascii=False, default=str)
+    except (TypeError, ValueError):
+        hints_json = repr(hints or {})
+    hints_hash = hashlib.sha256(hints_json.encode('utf-8')).hexdigest()
+    return f"{reader._sha}:{hints_hash}"
+
+def _course_cache_get(key: str) -> Optional[List['CourseCandidate']]:
+    with _GLOBAL_COURSE_DETECTOR_CACHE_LOCK:
+        cached = _GLOBAL_COURSE_DETECTOR_CACHE.get(key)
+        if cached is not None:
+            _GLOBAL_COURSE_DETECTOR_CACHE.move_to_end(key)
+        return cached
+
+def _course_cache_set(key: str, candidates: List['CourseCandidate']):
+    with _GLOBAL_COURSE_DETECTOR_CACHE_LOCK:
+        _GLOBAL_COURSE_DETECTOR_CACHE[key] = candidates
+        _GLOBAL_COURSE_DETECTOR_CACHE.move_to_end(key)
+        while len(_GLOBAL_COURSE_DETECTOR_CACHE) > _COURSE_CACHE_MAX_ITEMS:
+            _GLOBAL_COURSE_DETECTOR_CACHE.popitem(last=False)
 
 def run_task1(pdf_path: str, hints: Dict = None) -> Dict:
     hints    = hints or {}
     reader   = PDFReader(pdf_path)
     grammar  = DocumentGrammar(reader)
-    doc_key  = _get_doc_cache_key(reader, pdf_path)
-    if doc_key in _GLOBAL_COURSE_DETECTOR_CACHE:
-        cands = _GLOBAL_COURSE_DETECTOR_CACHE[doc_key]
-    else:
+    doc_key  = _get_doc_cache_key(reader, hints)
+    cands = _course_cache_get(doc_key)
+    if cands is None:
         detector = CourseDetector(reader, grammar, hints)
         cands    = detector.detect()
-        _GLOBAL_COURSE_DETECTOR_CACHE[doc_key] = cands
+        _course_cache_set(doc_key, cands)
 
     courses = [{"code": c.code, "title": c.title, "page": c.page}
                for c in cands]
@@ -1947,7 +1981,7 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
     hints    = hints or {}
     reader   = PDFReader(pdf_path)
     grammar  = DocumentGrammar(reader)
-    doc_key  = _get_doc_cache_key(reader, pdf_path)
+    doc_key  = _get_doc_cache_key(reader, hints)
 
     # Ultra-Fast Path 1: If hints contains catalog courses with page numbers, construct candidates directly!
     cands = []
@@ -1957,13 +1991,13 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
                 c_code = c.get("code") or ""
                 c_title = c.get("title") or ""
                 try:
-                    c_page = int(c.get("page") or 1)
+                    c_page = int(c.get("start_page") or c.get("page") or 1)
                 except Exception:
                     c_page = 1
                 cands.append(CourseCandidate(c_code, c_title, c_page, 0.99, ["catalog-hint"]))
         cands.sort(key=lambda x: x.page)
-    elif doc_key in _GLOBAL_COURSE_DETECTOR_CACHE:
-        cands = _GLOBAL_COURSE_DETECTOR_CACHE[doc_key]
+    else:
+        cands = _course_cache_get(doc_key) or []
 
     detector = CourseDetector(reader, grammar, hints)
 
@@ -1994,11 +2028,12 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
 
     # Fallback to document detection or cache if target still not found
     if target is None:
-        if doc_key in _GLOBAL_COURSE_DETECTOR_CACHE:
-            cands = _GLOBAL_COURSE_DETECTOR_CACHE[doc_key]
+        cached_candidates = _course_cache_get(doc_key)
+        if cached_candidates is not None:
+            cands = cached_candidates
         else:
             cands = detector.detect()
-            _GLOBAL_COURSE_DETECTOR_CACHE[doc_key] = cands
+            _course_cache_set(doc_key, cands)
         target = next((c for c in cands if matches_target(c)), None)
     if target is None:
         return {
@@ -2010,6 +2045,24 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
         }
 
     sp, ep = detector.find_boundary(cands, target.code, target.title, target_obj=target)
+    for hinted_course in hints.get("courses", []):
+        if not isinstance(hinted_course, dict):
+            continue
+        hinted_code = str(hinted_course.get("code") or "")
+        hinted_title = norm_title(hinted_course.get("title") or "")
+        target_title = norm_title(target.title)
+        title_matches = hinted_title and target_title and (
+            hinted_title == target_title or hinted_title in target_title or target_title in hinted_title
+        )
+        if codes_match(hinted_code, target.code) or title_matches:
+            try:
+                hinted_start = int(hinted_course.get("start_page") or hinted_course.get("page") or sp)
+                hinted_end = int(hinted_course.get("end_page") or hinted_start)
+                sp = max(1, min(hinted_start, reader.page_count))
+                ep = max(sp, min(hinted_end, reader.page_count))
+            except (TypeError, ValueError):
+                pass
+            break
     hints_with_code = dict(hints or {})
     hints_with_code["course_code"] = target.code
     ext    = DeepExtractor(reader, grammar, sp, ep, hints_with_code)
@@ -2276,6 +2329,9 @@ Exit codes:  0=ok  2=pdf missing  3=course not found  4=error
 
         sys.exit(exit_code)
 
+    except PDFReadError as e:
+        print(f"ERROR: {e}", file=sys.stderr)
+        sys.exit(2)
     except SystemExit: raise
     except Exception as e:
         if args.debug:
