@@ -43,6 +43,57 @@ class BookDiscoveryTests(unittest.TestCase):
         self.assertEqual(label, "Exact match")
         self.assertEqual(metrics["author"], 100)
 
+    def test_isbn_match_overrides_ambiguous_title_metadata(self):
+        record = self.record(title="Algorithms, Fourth Edition")
+        score, label, metrics = self.handler._catalog_match_score(
+            record,
+            "Introduction to Algorithms",
+            "",
+            "9780262033848",
+        )
+
+        self.assertGreater(score, 1200)
+        self.assertEqual(label, "Exact ISBN")
+        self.assertEqual(metrics["isbn"], 100)
+
+    def test_invalid_isbn_checksum_is_rejected(self):
+        self.assertEqual(self.handler._normalize_isbn("978-0-262-04630-6"), "")
+        self.assertEqual(
+            self.handler._normalize_isbn("978-0-262-04630-5"),
+            "9780262046305",
+        )
+
+    def test_open_library_isbn_uses_exact_edition_metadata(self):
+        work_search = {
+            "numFound": 1,
+            "docs": [{
+                "title": "Introduction to Algorithms",
+                "author_name": ["Thomas H. Cormen"],
+                "isbn": ["9780262046305", "9780262033848"],
+            }],
+        }
+        exact_edition = {
+            "key": "/books/OL34192801M",
+            "title": "Introduction to Algorithms, Fourth Edition",
+            "publish_date": "2022",
+            "publishers": ["MIT Press"],
+            "isbn_13": ["9780262046305"],
+            "covers": [13768952],
+        }
+        with patch.object(
+            self.handler,
+            "_catalog_json_request",
+            side_effect=[work_search, exact_edition],
+        ):
+            records, total = self.handler._search_open_library_catalog(
+                "", "", "9780262046305"
+            )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(records[0]["title"], "Introduction to Algorithms, Fourth Edition")
+        self.assertEqual(records[0]["year"], "2022")
+        self.assertEqual(records[0]["identifiers"][0], "9780262046305")
+
     def test_distinct_editions_are_not_collapsed(self):
         earlier = self.record(year="2009", identifiers=["9780262033848"])
         later = self.record(

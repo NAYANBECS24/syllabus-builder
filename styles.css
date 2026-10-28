@@ -1764,7 +1764,8 @@ code { font-family: var(--font-mono); }
 .finder-result-card.best-match { border-color: #8eb4e8; background: linear-gradient(135deg, #f8fbff, #fff); box-shadow: inset 3px 0 0 var(--accent-blue), 0 4px 14px rgba(30, 74, 135, .07); }
 .finder-result-card:hover { border-color: #abc6eb; box-shadow: 0 6px 16px rgba(30, 69, 118, .08); transform: translateY(-1px); }
 .finder-result-top { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; }
-.finder-result-identity { min-width: 0; }
+.finder-result-cover { flex: 0 0 52px; width: 52px; height: 74px; border: 1px solid #dbe4ef; border-radius: 5px; background: #eef2f7; object-fit: cover; box-shadow: 0 2px 5px rgba(15, 23, 42, .08); }
+.finder-result-identity { flex: 1 1 auto; min-width: 0; }
 .finder-result-identity h3 { overflow: hidden; margin: 0; color: var(--text-primary); font-size: .89rem; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
 .finder-result-identity p { margin: 4px 0 0; color: var(--text-secondary); font-size: .7rem; line-height: 1.45; }
 .finder-result-labels { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 5px; max-width: 230px; }

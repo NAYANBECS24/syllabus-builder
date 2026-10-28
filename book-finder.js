@@ -34,12 +34,14 @@ function setFinderBusy(isBusy) {
   const button = finderElement('finder-search-button');
   const title = finderElement('finder-title');
   const author = finderElement('finder-author');
+  const isbn = finderElement('finder-isbn');
   if (button) {
     button.disabled = isBusy;
     button.textContent = isBusy ? 'Searching catalogs…' : 'Run discovery agent';
   }
   if (title) title.disabled = isBusy;
   if (author) author.disabled = isBusy;
+  if (isbn) isbn.disabled = isBusy;
 }
 
 function setFinderProviderStatus(message) {
@@ -205,6 +207,17 @@ function createFinderResult(record) {
 
   const top = document.createElement('div');
   top.className = 'finder-result-top';
+  const coverUrl = finderSafeUrl(record.cover_url);
+  if (coverUrl) {
+    const cover = document.createElement('img');
+    cover.className = 'finder-result-cover';
+    cover.src = coverUrl;
+    cover.alt = '';
+    cover.loading = 'lazy';
+    cover.referrerPolicy = 'no-referrer';
+    cover.addEventListener('error', () => cover.remove(), { once: true });
+    top.append(cover);
+  }
   const identity = document.createElement('div');
   identity.className = 'finder-result-identity';
   const title = document.createElement('h3');
@@ -218,7 +231,7 @@ function createFinderResult(record) {
   const labels = document.createElement('div');
   labels.className = 'finder-result-labels';
   const match = document.createElement('span');
-  match.className = `finder-match-label ${record.match_label === 'Exact match' ? 'exact' : ''}`;
+  match.className = `finder-match-label ${['Exact match', 'Exact ISBN'].includes(record.match_label) ? 'exact' : ''}`;
   match.textContent = record.match_label || 'Catalog match';
   const access = document.createElement('span');
   access.className = `finder-access-label ${record.download_url ? 'download' : ''}`;
@@ -312,9 +325,10 @@ function renderFinderResults(data) {
   setFinderCoverage(data.coverage);
   const coverage = data.coverage || {};
   const candidateCount = Number(coverage.candidates_evaluated) || 0;
+  const queryLabel = data.query?.title || data.query?.isbn || '';
   setFinderSummary(items.length
-    ? `${candidateCount ? `${formatFinderNumber(candidateCount)} lawful catalog candidates scored; ` : ''}${items.length} best match${items.length === 1 ? '' : 'es'} shown for “${data.query?.title || ''}”. Confidence combines title, author, and catalog agreement.`
-    : `No catalog matches found for “${data.query?.title || ''}”. Try a shorter title or remove the author.`);
+    ? `${candidateCount ? `${formatFinderNumber(candidateCount)} trusted catalog candidates scored; ` : ''}${items.length} best match${items.length === 1 ? '' : 'es'} shown for “${queryLabel}”. Confidence combines ISBN, title, author, edition, and catalog agreement.`
+    : `No catalog matches found for “${queryLabel}”. Try a shorter title, remove the author, or enter the ISBN.`);
   const legalNote = finderElement('finder-legal-note');
   if (legalNote && data.legal_notice) legalNote.textContent = data.legal_notice;
   if (!items.length) {
@@ -347,10 +361,13 @@ function normalizeReference(book, index) {
   const author = String(book.author || book.authors || '').replace(/\s+/g, ' ').trim();
   const publisher = String(book.publisher || '').replace(/\s+/g, ' ').trim();
   const year = String(book.year || '').replace(/\s+/g, ' ').trim();
+  const isbnValue = Array.isArray(book.isbn) ? book.isbn[0] : (book.isbn || book.isbn13 || book.isbn10 || '');
+  const isbn = String(isbnValue).replace(/[^0-9Xx]/g, '').toUpperCase();
   return {
     id: `${index}-${title}-${author}`,
     title,
     author,
+    isbn: [10, 13].includes(isbn.length) ? isbn : '',
     label: [title, author, publisher, year].filter(Boolean).join(' — '),
   };
 }
@@ -391,8 +408,10 @@ function useFinderReference() {
   }
   const title = finderElement('finder-title');
   const author = finderElement('finder-author');
+  const isbn = finderElement('finder-isbn');
   if (title) title.value = reference.title;
   if (author) author.value = reference.author;
+  if (isbn) isbn.value = reference.isbn;
   title?.focus();
   setFinderSummary(`Reference imported: “${reference.title}”. Run the discovery agent to search trusted public catalogs.`);
 }
@@ -406,8 +425,10 @@ function openBookFinder(book) {
   window.navigate?.('finder');
   const title = finderElement('finder-title');
   const author = finderElement('finder-author');
+  const isbn = finderElement('finder-isbn');
   if (title) title.value = reference.title;
   if (author) author.value = reference.author;
+  if (isbn) isbn.value = reference.isbn;
   window.setTimeout(() => searchFinder(), 0);
 }
 
@@ -415,9 +436,21 @@ async function searchFinder(event) {
   event?.preventDefault();
   const title = finderElement('finder-title')?.value.replace(/\s+/g, ' ').trim() || '';
   const author = finderElement('finder-author')?.value.replace(/\s+/g, ' ').trim() || '';
-  if (title.length < 2) {
+  const rawIsbn = finderElement('finder-isbn')?.value.trim() || '';
+  const isbn = rawIsbn.replace(/[^0-9Xx]/g, '').toUpperCase();
+  if (!title && !isbn) {
+    finderToast('Enter a book title or ISBN', 'error');
+    finderElement('finder-title')?.focus();
+    return;
+  }
+  if (title && title.length < 2) {
     finderToast('Enter at least two characters of the book title', 'error');
     finderElement('finder-title')?.focus();
+    return;
+  }
+  if (rawIsbn && ![10, 13].includes(isbn.length)) {
+    finderToast('Enter a valid 10 or 13 character ISBN', 'error');
+    finderElement('finder-isbn')?.focus();
     return;
   }
   if (!window.STATE?.serverOnline && typeof window.checkServer === 'function') await window.checkServer(true);
@@ -439,7 +472,7 @@ async function searchFinder(event) {
     const response = await fetch(`${baseUrl}/api/book-discovery`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, author }),
+      body: JSON.stringify({ title, author, isbn }),
       signal: controller.signal,
     });
     const data = await response.json().catch(() => ({}));

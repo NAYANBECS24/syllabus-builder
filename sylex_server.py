@@ -33,6 +33,7 @@ MAX_BOOK_RESULTS = 20
 MAX_BOOK_OUTLINE_ITEMS = 160
 MAX_BOOK_DISCOVERY_TITLE_CHARS = 180
 MAX_BOOK_DISCOVERY_AUTHOR_CHARS = 160
+MAX_BOOK_DISCOVERY_ISBN_CHARS = 20
 MAX_BOOK_DISCOVERY_RESULTS = 24
 OPEN_LIBRARY_CANDIDATE_LIMIT = 100
 GOOGLE_BOOKS_CANDIDATE_LIMIT = 40
@@ -99,6 +100,7 @@ _load_local_env()
 # Server-side fallback credential. Configure NVIDIA_API_KEY in Vercel project
 # settings (or a local .env). Request-supplied keys take precedence.
 DEFAULT_NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "").strip()
+DEFAULT_GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
 
 # Where the prompt lives locally vs. inside a Vercel function bundle, where the
 # working directory is not the repo root. Bundled with functions["api/*.py"]
@@ -725,17 +727,24 @@ class Handler(BaseHTTPRequestHandler):
                 req_data = self._read_json_body()
                 title = req_data.get("title", "")
                 author = req_data.get("author", "")
-                if not isinstance(title, str) or not isinstance(author, str):
-                    raise RequestError("Book title and author must be text")
+                isbn = req_data.get("isbn", "")
+                if not isinstance(title, str) or not isinstance(author, str) or not isinstance(isbn, str):
+                    raise RequestError("Book title, author, and ISBN must be text")
                 title = re.sub(r"\s+", " ", title).strip()
                 author = re.sub(r"\s+", " ", author).strip()
-                if len(title) < 2:
+                raw_isbn = isbn.strip()
+                isbn = self._normalize_isbn(raw_isbn)
+                if not title and not isbn:
+                    raise RequestError("Enter a book title or ISBN")
+                if title and len(title) < 2:
                     raise RequestError("Enter at least two characters of the book title")
                 if len(title) > MAX_BOOK_DISCOVERY_TITLE_CHARS:
                     raise RequestError(f"Book title must be at most {MAX_BOOK_DISCOVERY_TITLE_CHARS} characters")
                 if len(author) > MAX_BOOK_DISCOVERY_AUTHOR_CHARS:
                     raise RequestError(f"Author name must be at most {MAX_BOOK_DISCOVERY_AUTHOR_CHARS} characters")
-                self.send_json(self._discover_catalog_books(title, author))
+                if len(raw_isbn) > MAX_BOOK_DISCOVERY_ISBN_CHARS or (raw_isbn and not isbn):
+                    raise RequestError("Enter a valid ISBN-10 or ISBN-13 (hyphens are allowed)")
+                self.send_json(self._discover_catalog_books(title, author, isbn))
                 return
             except RequestError as exc:
                 self.send_json({"error": str(exc)}, exc.status)
@@ -1516,6 +1525,19 @@ class Handler(BaseHTTPRequestHandler):
         match = re.search(r"(?:1[5-9]|20|21)\d{2}", str(value or ""))
         return match.group(0) if match else ""
 
+    @staticmethod
+    def _normalize_isbn(value: Any) -> str:
+        """Normalize and checksum-validate ISBN-10/ISBN-13 identifiers."""
+        identifier = re.sub(r"[^0-9Xx]", "", str(value or "")).upper()
+        if len(identifier) == 10 and identifier[:9].isdigit() and (identifier[9].isdigit() or identifier[9] == "X"):
+            digits = [int(char) for char in identifier[:9]] + [10 if identifier[9] == "X" else int(identifier[9])]
+            return identifier if sum((10 - index) * digit for index, digit in enumerate(digits)) % 11 == 0 else ""
+        if len(identifier) == 13 and identifier.isdigit():
+            total = sum(int(char) * (1 if index % 2 == 0 else 3) for index, char in enumerate(identifier[:12]))
+            check_digit = (10 - (total % 10)) % 10
+            return identifier if check_digit == int(identifier[12]) else ""
+        return ""
+
     def _catalog_isbns(self, values: Any) -> List[str]:
         """Return de-duplicated ISBN-like identifiers without trusting provider HTML."""
         if not isinstance(values, list):
@@ -1524,10 +1546,9 @@ class Handler(BaseHTTPRequestHandler):
         for value in values:
             if isinstance(value, dict):
                 value = value.get("identifier", "")
-            identifier = re.sub(r"[^0-9Xx]", "", str(value or ""))
-            if len(identifier) not in {10, 13}:
+            identifier = self._normalize_isbn(value)
+            if not identifier:
                 continue
-            identifier = identifier.upper()
             if identifier not in identifiers:
                 identifiers.append(identifier)
         return identifiers[:6]
@@ -1576,13 +1597,18 @@ class Handler(BaseHTTPRequestHandler):
         except (TypeError, ValueError):
             return fallback
 
-    def _search_open_library_catalog(self, title: str, author: str) -> Tuple[List[Dict[str, Any]], int]:
+    def _search_open_library_catalog(self, title: str, author: str, isbn: str = "") -> Tuple[List[Dict[str, Any]], int]:
         fields = ",".join([
             "key", "title", "author_name", "first_publish_year", "publisher",
             "ia", "public_scan_b", "ebook_access", "isbn", "edition_count",
+            "cover_i", "availability",
         ])
-        params = {"title": title, "limit": str(OPEN_LIBRARY_CANDIDATE_LIMIT), "fields": fields}
-        if author:
+        params = {"limit": str(OPEN_LIBRARY_CANDIDATE_LIMIT), "fields": fields}
+        if isbn:
+            params["q"] = f"isbn:{isbn}"
+        else:
+            params["title"] = title
+        if author and not isbn:
             params["author"] = author
         url = "https://openlibrary.org/search.json?" + urllib.parse.urlencode(params)
         try:
@@ -1591,6 +1617,76 @@ class Handler(BaseHTTPRequestHandler):
             params["limit"] = str(OPEN_LIBRARY_RETRY_CANDIDATE_LIMIT)
             retry_url = "https://openlibrary.org/search.json?" + urllib.parse.urlencode(params)
             response = self._catalog_json_request(retry_url, "Open Library")
+        if not response.get("docs") and author and not isbn:
+            fallback_params = {
+                "title": title,
+                "limit": str(OPEN_LIBRARY_RETRY_CANDIDATE_LIMIT),
+                "fields": fields,
+            }
+            response = self._catalog_json_request(
+                "https://openlibrary.org/search.json?" + urllib.parse.urlencode(fallback_params),
+                "Open Library",
+            )
+        if isbn and response.get("docs"):
+            # Search results are Work-level and can aggregate many editions. Resolve
+            # the ISBN endpoint so the card reflects the exact publisher/year/cover.
+            try:
+                edition = self._catalog_json_request(
+                    f"https://openlibrary.org/isbn/{urllib.parse.quote(isbn, safe='')}.json",
+                    "Open Library",
+                )
+            except RuntimeError:
+                edition = {}
+            if edition.get("title"):
+                work_document = response["docs"][0] if isinstance(response["docs"][0], dict) else {}
+                authors = [
+                    self._catalog_text(item, 120)
+                    for item in work_document.get("author_name", [])
+                    if self._catalog_text(item, 120)
+                ]
+                edition_key = self._catalog_text(edition.get("key"), 120)
+                detail_url = (
+                    f"https://openlibrary.org{edition_key}"
+                    if edition_key.startswith("/")
+                    else f"https://openlibrary.org/isbn/{urllib.parse.quote(isbn, safe='')}"
+                )
+                ocaid_value = edition.get("ocaid", "")
+                if isinstance(ocaid_value, list):
+                    ocaid_value = ocaid_value[0] if ocaid_value else ""
+                archive_identifier = self._catalog_text(ocaid_value, 160)
+                view_url = (
+                    f"https://archive.org/details/{urllib.parse.quote(archive_identifier, safe='')}"
+                    if archive_identifier else detail_url
+                )
+                publishers = edition.get("publishers", [])
+                if not isinstance(publishers, list):
+                    publishers = [publishers]
+                raw_identifiers = []
+                for field in ("isbn_13", "isbn_10"):
+                    values = edition.get(field, [])
+                    raw_identifiers.extend(values if isinstance(values, list) else [values])
+                identifiers = self._catalog_isbns(raw_identifiers)
+                if isbn in identifiers:
+                    identifiers = [isbn] + [item for item in identifiers if item != isbn]
+                covers = edition.get("covers", [])
+                cover_value = covers[0] if isinstance(covers, list) and covers else ""
+                record = {
+                    "id": f"openlibrary:{edition_key or isbn}",
+                    "title": self._catalog_text(edition.get("title")),
+                    "authors": authors,
+                    "year": self._catalog_year(edition.get("publish_date")),
+                    "publisher": self._catalog_text(publishers[0] if publishers else ""),
+                    "availability": "Read / borrow" if archive_identifier else "Catalog record",
+                    "view_url": view_url,
+                    "detail_url": detail_url,
+                    "download_url": "",
+                    "archive_identifier": archive_identifier,
+                    "identifiers": identifiers or [isbn],
+                    "edition_count": 1,
+                    "cover_url": f"https://covers.openlibrary.org/b/id/{cover_value}-M.jpg" if str(cover_value).isdigit() else "",
+                    "sources": [{"name": "Open Library", "url": detail_url}],
+                }
+                return [record], 1
         records = []
         for document in response.get("docs", [])[:OPEN_LIBRARY_CANDIDATE_LIMIT]:
             if not isinstance(document, dict):
@@ -1606,16 +1702,27 @@ class Handler(BaseHTTPRequestHandler):
                 detail_url = f"https://openlibrary.org/works/{urllib.parse.quote(work_key, safe='')}"
             else:
                 detail_url = "https://openlibrary.org/search?" + urllib.parse.urlencode({"title": record_title})
+            availability_data = document.get("availability") if isinstance(document.get("availability"), dict) else {}
             archive_ids = [
                 self._catalog_text(item, 160)
                 for item in document.get("ia", [])
                 if self._catalog_text(item, 160)
             ]
-            archive_identifier = archive_ids[0] if archive_ids and document.get("public_scan_b") else ""
+            availability_identifier = self._catalog_text(availability_data.get("identifier"), 160)
+            archive_identifier = availability_identifier or (archive_ids[0] if archive_ids and document.get("public_scan_b") else "")
             view_url = f"https://archive.org/details/{urllib.parse.quote(archive_identifier, safe='')}" if archive_identifier else detail_url
             publisher_value = document.get("publisher", [])
             publisher = self._catalog_text(publisher_value[0] if isinstance(publisher_value, list) and publisher_value else publisher_value)
-            access = "Read / borrow" if archive_identifier or document.get("ebook_access") == "borrowable" else "Catalog record"
+            if availability_data.get("is_readable") and not availability_data.get("is_lendable"):
+                access = "Read online"
+            elif archive_identifier or document.get("ebook_access") == "borrowable" or availability_data.get("is_lendable"):
+                access = "Read / borrow"
+            elif availability_data.get("is_previewable"):
+                access = "Preview available"
+            else:
+                access = "Catalog record"
+            cover_value = document.get("cover_i")
+            cover_url = f"https://covers.openlibrary.org/b/id/{cover_value}-M.jpg" if str(cover_value or "").isdigit() else ""
             records.append({
                 "id": f"openlibrary:{work_key or record_title}",
                 "title": record_title,
@@ -1629,20 +1736,31 @@ class Handler(BaseHTTPRequestHandler):
                 "archive_identifier": archive_identifier,
                 "identifiers": self._catalog_isbns(document.get("isbn", [])),
                 "edition_count": document.get("edition_count") or 0,
+                "cover_url": cover_url,
                 "sources": [{"name": "Open Library", "url": detail_url}],
             })
         return records, self._catalog_total(response.get("num_found", response.get("numFound")), len(records))
 
-    def _search_google_books_catalog(self, title: str, author: str) -> Tuple[List[Dict[str, Any]], int]:
-        query_parts = [f'intitle:"{title}"']
-        if author:
+    def _search_google_books_catalog(self, title: str, author: str, isbn: str = "") -> Tuple[List[Dict[str, Any]], int]:
+        query_parts = [f"isbn:{isbn}"] if isbn else [f'intitle:"{title}"']
+        if author and not isbn:
             query_parts.append(f'inauthor:"{author}"')
-        url = "https://www.googleapis.com/books/v1/volumes?" + urllib.parse.urlencode({
+        params = {
             "q": " ".join(query_parts),
             "maxResults": str(GOOGLE_BOOKS_CANDIDATE_LIMIT),
             "printType": "books",
-        })
+            "orderBy": "relevance",
+        }
+        if DEFAULT_GOOGLE_BOOKS_API_KEY:
+            params["key"] = DEFAULT_GOOGLE_BOOKS_API_KEY
+        url = "https://www.googleapis.com/books/v1/volumes?" + urllib.parse.urlencode(params)
         response = self._catalog_json_request(url, "Google Books")
+        if not response.get("items") and author and not isbn:
+            params["q"] = " ".join(part for part in (title, author) if part)
+            response = self._catalog_json_request(
+                "https://www.googleapis.com/books/v1/volumes?" + urllib.parse.urlencode(params),
+                "Google Books",
+            )
         google_hosts = {"books.google.com", "google.com", "books.googleusercontent.com", "play.google.com"}
         records = []
         for item in response.get("items", [])[:GOOGLE_BOOKS_CANDIDATE_LIMIT]:
@@ -1669,6 +1787,11 @@ class Handler(BaseHTTPRequestHandler):
             if pdf_info.get("isAvailable"):
                 download_url = self._safe_catalog_link(pdf_info.get("downloadLink"), google_hosts)
             viewability = self._catalog_text(access_info.get("viewability"), 40).upper()
+            image_links = volume.get("imageLinks") if isinstance(volume.get("imageLinks"), dict) else {}
+            raw_cover = image_links.get("thumbnail") or image_links.get("smallThumbnail") or ""
+            if isinstance(raw_cover, str) and raw_cover.startswith("http://"):
+                raw_cover = "https://" + raw_cover[len("http://"):]
+            cover_url = self._safe_catalog_link(raw_cover, google_hosts)
             if download_url:
                 availability = "Downloadable PDF"
             elif viewability == "ALL_PAGES":
@@ -1690,15 +1813,20 @@ class Handler(BaseHTTPRequestHandler):
                 "archive_identifier": "",
                 "identifiers": self._catalog_isbns(volume.get("industryIdentifiers", [])),
                 "edition_count": 1,
+                "cover_url": cover_url,
                 "sources": [{"name": "Google Books", "url": detail_url}],
             })
         return records, self._catalog_total(response.get("totalItems"), len(records))
 
-    def _search_internet_archive_catalog(self, title: str, author: str) -> Tuple[List[Dict[str, Any]], int]:
+    def _search_internet_archive_catalog(self, title: str, author: str, isbn: str = "") -> Tuple[List[Dict[str, Any]], int]:
         """Search Internet Archive's public text catalog without crawling arbitrary sites."""
         safe_title = re.sub(r"[\"\\{}\[\]():]", " ", title)
-        clauses = ["mediatype:texts", f'title:("{safe_title}")']
-        if author:
+        clauses = ["mediatype:texts"]
+        if isbn:
+            clauses.append(f'isbn:("{isbn}")')
+        else:
+            clauses.append(f'title:("{safe_title}")')
+        if author and not isbn:
             safe_author = re.sub(r"[\"\\{}\[\]():]", " ", author)
             clauses.append(f'creator:("{safe_author}")')
         fields = [
@@ -1714,6 +1842,16 @@ class Handler(BaseHTTPRequestHandler):
         }, doseq=True)
         response = self._catalog_json_request(url, "Internet Archive")
         result = response.get("response") if isinstance(response.get("response"), dict) else {}
+        if not result.get("docs") and author and not isbn:
+            fallback_url = "https://archive.org/advancedsearch.php?" + urllib.parse.urlencode({
+                "q": f'mediatype:texts AND title:("{safe_title}")',
+                "fl[]": fields,
+                "rows": str(INTERNET_ARCHIVE_CANDIDATE_LIMIT),
+                "page": "1",
+                "output": "json",
+            }, doseq=True)
+            response = self._catalog_json_request(fallback_url, "Internet Archive")
+            result = response.get("response") if isinstance(response.get("response"), dict) else {}
         documents = result.get("docs") if isinstance(result.get("docs"), list) else []
         records = []
         for document in documents[:INTERNET_ARCHIVE_CANDIDATE_LIMIT]:
@@ -1742,11 +1880,13 @@ class Handler(BaseHTTPRequestHandler):
                 "archive_identifier": identifier,
                 "identifiers": self._catalog_isbns(document.get("isbn", [])),
                 "edition_count": 1,
+                "cover_url": f"https://archive.org/services/img/{urllib.parse.quote(identifier, safe='')}",
                 "sources": [{"name": "Internet Archive", "url": detail_url}],
             })
         return records, self._catalog_total(result.get("numFound"), len(records))
 
-    def _catalog_match_score(self, record: Dict[str, Any], title: str, author: str) -> Tuple[int, str, Dict[str, int]]:
+    def _catalog_match_score(self, record: Dict[str, Any], title: str, author: str,
+                             isbn: str = "") -> Tuple[int, str, Dict[str, int]]:
         query_title = self._catalog_key(title)
         candidate_title = self._catalog_key(record.get("title"))
         title_ratio = self._catalog_similarity(query_title, candidate_title)
@@ -1762,15 +1902,21 @@ class Handler(BaseHTTPRequestHandler):
                 (self._catalog_similarity(author, item) for item in author_candidates),
                 default=0.0,
             )
-        title_confidence = round(((title_ratio * 0.72) + (title_overlap * 0.28)) * 100)
+        title_confidence = round(((title_ratio * 0.72) + (title_overlap * 0.28)) * 100) if title else 0
         author_confidence = round(author_score * 100) if author else 0
         confidence = round((title_confidence * 0.74) + (author_confidence * 0.26)) if author else title_confidence
         score = confidence * 10
+        isbn_match = bool(isbn and isbn in self._catalog_isbns(record.get("identifiers", [])))
+        if isbn_match:
+            confidence = 99
+            score += 1200
         if query_title == candidate_title:
             score += 180
         if record.get("download_url"):
             score += 2
-        if query_title == candidate_title and (not author or author_score >= 0.88):
+        if isbn_match:
+            label = "Exact ISBN"
+        elif query_title == candidate_title and (not author or author_score >= 0.88):
             label = "Exact match"
         elif title_ratio >= 0.72 and title_overlap >= 0.5:
             label = "Close match"
@@ -1780,6 +1926,7 @@ class Handler(BaseHTTPRequestHandler):
             "title": max(0, min(100, title_confidence)),
             "author": max(0, min(100, author_confidence)),
             "base": max(0, min(100, confidence)),
+            "isbn": 100 if isbn_match else 0,
         }
 
     @staticmethod
@@ -1790,12 +1937,16 @@ class Handler(BaseHTTPRequestHandler):
         if source_count > 1:
             confidence = min(99, confidence + min(4, (source_count - 1) * 2))
         signals = [f"Title {int(metrics.get('title', 0))}%"]
+        if metrics.get("isbn"):
+            signals.insert(0, "ISBN exact")
         if has_author_query:
             signals.append(f"Author {int(metrics.get('author', 0))}%")
         signals.append(f"Verified by {source_count} catalog{'s' if source_count != 1 else ''}")
         record["match_confidence"] = max(0, min(99, confidence))
         record["match_signals"] = signals
-        if record.get("match_label") == "Exact match":
+        if record.get("match_label") == "Exact ISBN":
+            record["match_reason"] = "Exact ISBN edition match"
+        elif record.get("match_label") == "Exact match":
             record["match_reason"] = "Exact title" + (" and author" if has_author_query else "")
         elif record.get("match_label") == "Close match":
             record["match_reason"] = "Strong title and author similarity" if has_author_query else "Strong title similarity"
@@ -1815,13 +1966,14 @@ class Handler(BaseHTTPRequestHandler):
             return True
         return self._catalog_edition_key(first) == self._catalog_edition_key(second)
 
-    def _merge_catalog_records(self, records: List[Dict[str, Any]], title: str, author: str) -> List[Dict[str, Any]]:
+    def _merge_catalog_records(self, records: List[Dict[str, Any]], title: str, author: str,
+                               isbn: str = "") -> List[Dict[str, Any]]:
         merged: List[Dict[str, Any]] = []
         access_rank = {"Downloadable PDF": 4, "Free PDF": 4, "Read online": 3, "Read / borrow": 2, "Preview available": 1, "Catalog record": 0}
         for record in records:
             if not self._catalog_key(record.get("title")):
                 continue
-            score, label, metrics = self._catalog_match_score(record, title, author)
+            score, label, metrics = self._catalog_match_score(record, title, author, isbn)
             record["match_score"] = score
             record["match_label"] = label
             record["_match_metrics"] = metrics
@@ -1842,6 +1994,8 @@ class Handler(BaseHTTPRequestHandler):
                 existing["view_url"] = record["view_url"]
             if not existing.get("detail_url") and record.get("detail_url"):
                 existing["detail_url"] = record["detail_url"]
+            if not existing.get("cover_url") and record.get("cover_url"):
+                existing["cover_url"] = record["cover_url"]
             existing_identifiers = self._catalog_isbns(existing.get("identifiers", []))
             for identifier in self._catalog_isbns(record.get("identifiers", [])):
                 if identifier not in existing_identifiers:
@@ -1919,8 +2073,8 @@ class Handler(BaseHTTPRequestHandler):
                     record.setdefault("sources", []).append(archive_source)
 
     @staticmethod
-    def _catalog_fallback_links(title: str, author: str) -> List[Dict[str, str]]:
-        query = " ".join(part for part in (title, author) if part).strip()
+    def _catalog_fallback_links(title: str, author: str, isbn: str = "") -> List[Dict[str, str]]:
+        query = isbn or " ".join(part for part in (title, author) if part).strip()
         return [
             {
                 "name": "Search Open Library",
@@ -1932,8 +2086,8 @@ class Handler(BaseHTTPRequestHandler):
             },
         ]
 
-    def _discover_catalog_books(self, title: str, author: str) -> Dict[str, Any]:
-        cache_key = f"{self._catalog_key(title)}\x1f{self._catalog_key(author)}"
+    def _discover_catalog_books(self, title: str, author: str, isbn: str = "") -> Dict[str, Any]:
+        cache_key = f"{self._catalog_key(title)}\x1f{self._catalog_key(author)}\x1f{isbn}"
         cached = BOOK_DISCOVERY_CACHE.get(cache_key)
         if cached and (time.monotonic() - cached.get("stored_at", 0)) < cached.get("ttl_seconds", BOOK_DISCOVERY_CACHE_TTL_SECONDS):
             payload = copy.deepcopy(cached["payload"])
@@ -1951,7 +2105,7 @@ class Handler(BaseHTTPRequestHandler):
         # hold the entire discovery agent hostage.
         outcomes = {}
         with ThreadPoolExecutor(max_workers=len(providers)) as executor:
-            futures = {executor.submit(search, title, author): name for name, search in providers}
+            futures = {executor.submit(search, title, author, isbn): name for name, search in providers}
             for future in as_completed(futures):
                 name = futures[future]
                 try:
@@ -1972,15 +2126,18 @@ class Handler(BaseHTTPRequestHandler):
                     "catalog_hits": catalog_hits,
                 })
             else:
+                detail = value
+                if name == "Google Books" and not DEFAULT_GOOGLE_BOOKS_API_KEY:
+                    detail = f"{value}; configure GOOGLE_BOOKS_API_KEY for higher quota"
                 provider_status.append({
                     "name": name,
                     "status": "unavailable",
                     "matches": 0,
                     "catalog_hits": 0,
-                    "detail": value,
+                    "detail": detail,
                 })
 
-        records = self._merge_catalog_records(all_records, title, author)
+        records = self._merge_catalog_records(all_records, title, author, isbn)
         records.sort(key=lambda item: (-item["match_score"], item["title"].casefold()))
         self._add_archive_pdf_links(records)
         for record in records:
@@ -1992,6 +2149,8 @@ class Handler(BaseHTTPRequestHandler):
             record.pop("match_score", None)
             record.pop("_match_metrics", None)
             record["identifiers"] = self._catalog_isbns(record.get("identifiers", []))
+            if isbn and isbn in record["identifiers"]:
+                record["identifiers"] = [isbn] + [item for item in record["identifiers"] if item != isbn]
             try:
                 edition_count = int(record.get("edition_count") or 0)
             except (TypeError, ValueError):
@@ -2002,7 +2161,7 @@ class Handler(BaseHTTPRequestHandler):
             public_records.append(record)
         reported_catalog_hits = sum(item.get("catalog_hits", 0) for item in provider_status if item["status"] == "available")
         payload = {
-            "query": {"title": title, "author": author},
+            "query": {"title": title, "author": author, "isbn": isbn},
             "results": public_records,
             "providers": provider_status,
             "coverage": {
@@ -2013,7 +2172,7 @@ class Handler(BaseHTTPRequestHandler):
                 "providers_checked": len(provider_status),
             },
             "cached": False,
-            "fallback_links": self._catalog_fallback_links(title, author) if not public_records else [],
+            "fallback_links": self._catalog_fallback_links(title, author, isbn) if not public_records else [],
             "legal_notice": "The discovery agent checks Open Library, Google Books, and Internet Archive. PDF previews and downloads appear only when the provider exposes a public file; it does not crawl or link to unauthorized copies.",
         }
         BOOK_DISCOVERY_CACHE.set(cache_key, {

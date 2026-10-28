@@ -631,10 +631,12 @@ python run.py</pre>
     <aside class="finder-search-panel" aria-label="Book discovery search">
       <div class="book-step-label">01 · Describe the book</div>
       <form id="finder-search-form" class="finder-search-form" novalidate>
-        <label for="finder-title">Book title <span aria-hidden="true">*</span></label>
-        <input id="finder-title" type="search" maxlength="180" placeholder="e.g. Introduction to Algorithms" autocomplete="off" required/>
+        <label for="finder-title">Book title <span class="finder-optional">Title or ISBN is required</span></label>
+        <input id="finder-title" type="search" maxlength="180" placeholder="e.g. Introduction to Algorithms" autocomplete="off"/>
         <label for="finder-author">Author <span class="finder-optional">Optional, improves matching</span></label>
         <input id="finder-author" type="search" maxlength="160" placeholder="e.g. Thomas H. Cormen" autocomplete="off"/>
+        <label for="finder-isbn">ISBN <span class="finder-optional">Optional, finds the exact edition</span></label>
+        <input id="finder-isbn" type="search" inputmode="text" maxlength="20" placeholder="e.g. 9780262046305" autocomplete="off"/>
         <button id="finder-search-button" class="btn btn-primary finder-search-button" type="submit">Run discovery agent</button>
       </form>
 
