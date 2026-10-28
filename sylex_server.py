@@ -107,16 +107,16 @@ def _validated_endpoint(endpoint: str) -> str:
 
 def _load_local_env():
     """Load local secrets without affecting Vercel's managed environment."""
-    env_file = BASE_DIR / ".env"
-    if not env_file.is_file():
-        return
-    for line in env_file.read_text(encoding="utf-8").splitlines():
-        if not line or line.lstrip().startswith("#") or "=" not in line:
+    for env_file in (BASE_DIR / ".env", BASE_DIR / ".env.local"):
+        if not env_file.is_file():
             continue
-        name, value = line.split("=", 1)
-        name = name.strip()
-        if name and name not in os.environ:
-            os.environ[name] = value.strip().strip('"').strip("'")
+        for line in env_file.read_text(encoding="utf-8").splitlines():
+            if not line or line.lstrip().startswith("#") or "=" not in line:
+                continue
+            name, value = line.split("=", 1)
+            name = name.strip()
+            if name and name not in os.environ:
+                os.environ[name] = value.strip().strip('"').strip("'")
 
 _load_local_env()
 

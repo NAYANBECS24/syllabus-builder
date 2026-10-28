@@ -96,7 +96,7 @@ The web UI provides a professional workspace for uploading PDFs, reviewing extra
 
 ### Book provider configuration
 
-Copy `.env.example` to `.env` for local development, or add the same values to the deployment environment:
+Copy `.env.example` to `.env` for local development, place machine-specific overrides in the Git-ignored `.env.local`, or add the same values to the deployment environment:
 
 ```env
 # Required only for the Google Books provider
