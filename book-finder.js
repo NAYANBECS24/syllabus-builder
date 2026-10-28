@@ -542,7 +542,7 @@ function closeFinderPreview() {
 function openFinderPreview(url, title) {
   const safeUrl = finderSafeUrl(url);
   if (!safeUrl) {
-    finderToast('This provider did not supply a secure PDF preview link', 'error');
+    finderToast('This provider did not supply a secure preview link', 'error');
     return;
   }
   const panel = finderElement('finder-preview-panel');
@@ -722,9 +722,15 @@ function createFinderResult(record) {
   save.setAttribute('aria-pressed', String(saved));
   const view = createFinderLink(record.availability === 'Preview available' ? 'Preview book ↗' : 'View / read ↗', record.view_url, 'finder-action finder-action-primary');
   const previewDownload = downloads.find(download => download.canPreview);
+  const providerPreviewUrl = finderSafeUrl(record.view_url || record.detail_url);
   const analyzablePdf = downloads.find(download => download.format === 'PDF' && download.canAnalyze);
-  const workspacePreview = previewDownload
-    ? createFinderButton(`Preview ${previewDownload.format} in workspace`, 'finder-action finder-action-preview', () => openFinderPreview(previewDownload.url, record.title))
+  const workspacePreviewUrl = previewDownload?.url || providerPreviewUrl;
+  const workspacePreview = workspacePreviewUrl
+    ? createFinderButton(
+      previewDownload ? `Preview ${previewDownload.format} in workspace` : 'Preview provider page in workspace',
+      'finder-action finder-action-preview',
+      () => openFinderPreview(workspacePreviewUrl, record.title),
+    )
     : null;
   const inspect = analyzablePdf
     ? createFinderButton('Analyze PDF in Book Explorer', 'finder-action finder-action-inspect', event => importFinderPdf(record, event.currentTarget, analyzablePdf.url))

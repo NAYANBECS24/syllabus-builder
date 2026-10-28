@@ -17,10 +17,12 @@ import sys
 import os
 import subprocess
 import argparse
+import time
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 SYLEX    = os.path.join(BASE_DIR, "sylex.py")
 SERVER   = os.path.join(BASE_DIR, "sylex_server.py")
+SERVER_PID_FILE = os.path.join(BASE_DIR, ".sylex-server.pid")
 
 # ── Find Python ────────────────────────────────────────────────────
 def find_python():
@@ -38,6 +40,85 @@ def find_python():
     return sys.executable
 
 PY = find_python()
+
+def _read_server_pid():
+    try:
+        with open(SERVER_PID_FILE, "r", encoding="utf-8") as pid_handle:
+            pid = int(pid_handle.read().strip())
+        return pid if pid > 0 else None
+    except (OSError, TypeError, ValueError):
+        return None
+
+def _process_exists(pid):
+    try:
+        os.kill(pid, 0)
+        return True
+    except OSError:
+        return False
+
+def _process_command(pid):
+    """Read a process command without requiring third-party process libraries."""
+    if os.name == "nt":
+        command = (
+            "$process = Get-CimInstance Win32_Process -Filter 'ProcessId = "
+            + str(int(pid))
+            + "'; if ($process) { $process.CommandLine }"
+        )
+        result = subprocess.run(
+            ["powershell.exe", "-NoProfile", "-Command", command],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    else:
+        result = subprocess.run(
+            ["ps", "-p", str(int(pid)), "-o", "command="],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+def _is_sylex_server(pid):
+    command = os.path.normcase(_process_command(pid)).replace("/", os.sep).replace("\\", os.sep)
+    server_path = os.path.normcase(os.path.abspath(SERVER))
+    return bool(command and server_path in command)
+
+def _remove_stale_pid_file(expected_pid=None):
+    try:
+        if expected_pid is not None and _read_server_pid() != expected_pid:
+            return
+        os.remove(SERVER_PID_FILE)
+    except FileNotFoundError:
+        pass
+
+def stop_previous_server():
+    """Stop only the prior server recorded by this project, never an arbitrary port owner."""
+    pid = _read_server_pid()
+    if not pid:
+        return False
+    if not _process_exists(pid) or not _is_sylex_server(pid):
+        _remove_stale_pid_file(pid)
+        return False
+    if os.name == "nt":
+        result = subprocess.run(
+            ["taskkill", "/PID", str(pid), "/T", "/F"],
+            capture_output=True,
+            text=True,
+            timeout=8,
+        )
+        if result.returncode != 0 and _process_exists(pid):
+            raise RuntimeError("The previous SYLEX server could not be stopped")
+    else:
+        import signal
+        os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + 4
+    while _process_exists(pid) and time.monotonic() < deadline:
+        time.sleep(0.1)
+    if _process_exists(pid):
+        raise RuntimeError("The previous SYLEX server did not exit in time")
+    _remove_stale_pid_file(pid)
+    return True
 
 # ── Dependency check ───────────────────────────────────────────────
 REQUIRED = ["pdfplumber", "pymupdf"]
@@ -128,6 +209,12 @@ Examples:
     print()
     print("  Ctrl+C to stop the server.")
     print()
+    try:
+        if stop_previous_server():
+            print("  Previous SYLEX session closed. Starting a fresh session...\n")
+    except RuntimeError as exc:
+        print(f"  ERROR: {exc}")
+        sys.exit(1)
     server_cmd = [PY, SERVER]
     if not args.server:
         server_cmd.append("--browser")

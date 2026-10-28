@@ -26,6 +26,7 @@ from typing import Dict, Any, Optional, List, Tuple
 PORT      = 7823
 HOST      = os.environ.get("SYLEX_HOST", "127.0.0.1")
 BASE_DIR  = Path(__file__).parent
+SERVER_PID_FILE = BASE_DIR / ".sylex-server.pid"
 SYLEX_PY  = BASE_DIR / "sylex.py"
 MAX_JSON_BYTES = 1 * 1024 * 1024
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024
@@ -3634,6 +3635,7 @@ def main():
     print("Press Ctrl+C to stop.\n")
 
     server = ThreadingHTTPServer((HOST, PORT), Handler)
+    SERVER_PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
     try:
         if "--browser" in sys.argv:
             def open_browser():
@@ -3644,6 +3646,13 @@ def main():
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nServer stopped.")
+    finally:
+        server.server_close()
+        try:
+            if SERVER_PID_FILE.read_text(encoding="utf-8").strip() == str(os.getpid()):
+                SERVER_PID_FILE.unlink()
+        except (FileNotFoundError, OSError):
+            pass
 
 if __name__ == "__main__":
     main()

@@ -30,6 +30,7 @@ wheels/
 .env
 .env.*
 !.env.example
+.sylex-server.pid
 
 # Temporary / Scratch Files
 stderr.txt
