@@ -7,7 +7,7 @@ Run this to use the web dashboard offline.
     # then open http://localhost:7823 in your browser
 """
 
-import sys, os, json, tempfile, threading, subprocess, mimetypes, hashlib, copy, html, platform, re, time, difflib
+import sys, os, json, tempfile, threading, subprocess, mimetypes, hashlib, copy, html, platform, re, time, difflib, math
 import urllib
 import urllib.request
 import urllib.error
@@ -31,6 +31,11 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 MAX_BOOK_QUERY_CHARS = 160
 MAX_BOOK_RESULTS = 20
 MAX_BOOK_OUTLINE_ITEMS = 160
+BOOK_SEARCH_MODES = {"balanced", "exact", "broad"}
+BOOK_SEARCH_STOP_WORDS = {
+    "a", "an", "and", "are", "as", "at", "be", "by", "for", "from", "in",
+    "is", "it", "of", "on", "or", "that", "the", "this", "to", "with",
+}
 MAX_BOOK_DISCOVERY_TITLE_CHARS = 180
 MAX_BOOK_DISCOVERY_AUTHOR_CHARS = 160
 MAX_BOOK_DISCOVERY_ISBN_CHARS = 20
@@ -54,6 +59,16 @@ class RequestError(ValueError):
     def __init__(self, message: str, status: int = 400):
         super().__init__(message)
         self.status = status
+
+
+def _pymupdf_module():
+    """Load modern PyMuPDF while retaining compatibility with older installs."""
+    try:
+        import pymupdf
+        return pymupdf
+    except ImportError:
+        import fitz
+        return fitz
 
 
 def _validated_endpoint(endpoint: str) -> str:
@@ -683,7 +698,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise RequestError("Content-Type must be multipart/form-data", 415)
                 length = self._content_length(MAX_UPLOAD_BYTES)
                 body = self.rfile.read(length)
-                pdf_bytes, pdf_filename, query = self._parse_book_search_multipart(ctype, body)
+                pdf_bytes, pdf_filename, query, search_mode = self._parse_book_search_multipart(ctype, body)
 
                 if not pdf_bytes:
                     raise RequestError("Select a book PDF before searching")
@@ -693,6 +708,8 @@ class Handler(BaseHTTPRequestHandler):
                     raise RequestError("Enter at least two characters to search")
                 if len(query) > MAX_BOOK_QUERY_CHARS:
                     raise RequestError(f"Search query must be at most {MAX_BOOK_QUERY_CHARS} characters")
+                if search_mode not in BOOK_SEARCH_MODES:
+                    raise RequestError("Search mode must be balanced, exact, or broad")
 
                 book_key = hashlib.sha256(pdf_bytes).hexdigest()
                 book_index = BOOK_TEXT_CACHE.get(book_key)
@@ -702,8 +719,12 @@ class Handler(BaseHTTPRequestHandler):
                     BOOK_TEXT_CACHE.set(book_key, book_index)
 
                 results, total_matches = self._search_book_pages(
-                    book_index["pages"], query, book_index.get("outline", [])
+                    book_index["pages"], query, book_index.get("outline", []), search_mode
                 )
+                searchable_ratio = round(
+                    (book_index["searchable_pages"] / max(1, book_index["page_count"])) * 100
+                )
+                index_health = "excellent" if searchable_ratio >= 90 else "partial" if searchable_ratio >= 45 else "limited"
                 self.send_json({
                     "book": pdf_filename or "book.pdf",
                     "page_count": book_index["page_count"],
@@ -713,6 +734,20 @@ class Handler(BaseHTTPRequestHandler):
                     "searchable_pages": book_index["searchable_pages"],
                     "outline": book_index.get("outline", []),
                     "query": query,
+                    "search_plan": {
+                        "mode": search_mode,
+                        "strategy": {
+                            "balanced": "Phrase, term coverage, rarity, proximity, and section evidence",
+                            "exact": "Exact phrase only",
+                            "broad": "Any meaningful term, ranked by evidence strength",
+                        }[search_mode],
+                        "terms": self._book_query_terms(query),
+                    },
+                    "index_health": {
+                        "status": index_health,
+                        "searchable_percent": searchable_ratio,
+                        "unsearchable_pages": max(0, book_index["page_count"] - book_index["searchable_pages"]),
+                    },
                     "total_matches": total_matches,
                     "results": results,
                     "cached": cache_hit,
@@ -1263,13 +1298,14 @@ class Handler(BaseHTTPRequestHandler):
 
         return pdf_bytes, pdf_filename, course, hints_json, debug_flag, mode, provider, model, api_key, endpoint
 
-    def _parse_book_search_multipart(self, ctype: str, body: bytes) -> Tuple[Optional[bytes], Optional[str], str]:
+    def _parse_book_search_multipart(self, ctype: str, body: bytes) -> Tuple[Optional[bytes], Optional[str], str, str]:
         """Read a book PDF and topic query from a multipart search request."""
         import email
         msg = email.message_from_bytes(f"Content-Type: {ctype}\r\n\r\n".encode() + body)
         pdf_bytes: Optional[bytes] = None
         pdf_filename: Optional[str] = None
         query = ""
+        search_mode = "balanced"
 
         if not msg.is_multipart():
             raise RequestError("Content-Type must be multipart/form-data", 415)
@@ -1283,8 +1319,12 @@ class Handler(BaseHTTPRequestHandler):
                 value = part.get_payload(decode=True)
                 if isinstance(value, bytes):
                     query = value.decode("utf-8", "ignore").strip()
+            elif 'name="mode"' in disposition:
+                value = part.get_payload(decode=True)
+                if isinstance(value, bytes):
+                    search_mode = value.decode("utf-8", "ignore").strip().casefold() or "balanced"
 
-        return pdf_bytes, pdf_filename, query
+        return pdf_bytes, pdf_filename, query, search_mode
 
     def _parse_book_page_multipart(self, ctype: str, body: bytes) -> Tuple[Optional[bytes], str]:
         """Read a book PDF and selected one-based page number from multipart data."""
@@ -1310,7 +1350,7 @@ class Handler(BaseHTTPRequestHandler):
     def _extract_book_page_text(self, pdf_bytes: bytes) -> Dict[str, Any]:
         """Extract normalized text page-by-page for deterministic topic search."""
         try:
-            import fitz
+            fitz = _pymupdf_module()
             document = fitz.open(stream=pdf_bytes, filetype="pdf")
         except Exception as exc:
             raise RequestError(f"Unable to read this PDF: {exc}", 422) from exc
@@ -1343,7 +1383,7 @@ class Handler(BaseHTTPRequestHandler):
     def _create_book_page_pdf(self, pdf_bytes: bytes, page_number: int) -> bytes:
         """Return a standalone PDF containing exactly the requested source page."""
         try:
-            import fitz
+            fitz = _pymupdf_module()
             document = fitz.open(stream=pdf_bytes, filetype="pdf")
         except Exception as exc:
             raise RequestError(f"Unable to read this PDF: {exc}", 422) from exc
@@ -1438,41 +1478,139 @@ class Handler(BaseHTTPRequestHandler):
         title = str(context.get("title") or "").strip()
         return f"{label} · {title}".strip(" ·")
 
-    def _search_book_pages(self, pages: List[Dict[str, Any]], query: str,
-                           outline: Optional[List[Dict[str, Any]]] = None) -> Tuple[List[Dict[str, Any]], int]:
-        """Find exact phrases first, then pages containing all meaningful query terms."""
-        normalized_query = re.sub(r"\s+", " ", query.casefold()).strip()
-        terms = []
+    @staticmethod
+    def _book_query_terms(query: str) -> List[str]:
+        """Return de-duplicated meaningful terms while preserving query order."""
+        normalized_query = re.sub(r"\s+", " ", str(query).casefold()).strip()
+        all_terms = []
         for term in re.findall(r"\w[\w+.#/-]*", normalized_query, flags=re.UNICODE):
-            if term not in terms:
-                terms.append(term)
+            cleaned = term.strip("-/.#")
+            if cleaned and cleaned not in all_terms:
+                all_terms.append(cleaned)
+        meaningful = [term for term in all_terms if term not in BOOK_SEARCH_STOP_WORDS]
+        return meaningful or all_terms
+
+    @staticmethod
+    def _book_term_pattern(term: str) -> str:
+        """Build conservative whole-word variants for common English inflections."""
+        variants = {term}
+        if len(term) >= 4:
+            if term.endswith("ies") and len(term) > 4:
+                variants.add(term[:-3] + "y")
+            elif term.endswith("s") and not term.endswith(("ss", "us", "is")):
+                variants.add(term[:-1])
+            else:
+                variants.update({term + "s", term + "es"})
+            if term.endswith("ing") and len(term) > 5:
+                root = term[:-3]
+                variants.update({root, root + "e"})
+            elif term.endswith("ed") and len(term) > 4:
+                root = term[:-2]
+                variants.update({root, root + "e"})
+        alternatives = "|".join(re.escape(value) for value in sorted(variants, key=len, reverse=True))
+        return rf"(?<!\w)(?:{alternatives})(?!\w)"
+
+    def _search_book_pages(self, pages: List[Dict[str, Any]], query: str,
+                           outline: Optional[List[Dict[str, Any]]] = None,
+                           mode: str = "balanced") -> Tuple[List[Dict[str, Any]], int]:
+        """Rank pages using phrase, coverage, rarity, proximity, and heading evidence."""
+        if mode not in BOOK_SEARCH_MODES:
+            raise RequestError("Search mode must be balanced, exact, or broad")
+        normalized_query = re.sub(r"\s+", " ", query.casefold()).strip()
+        terms = self._book_query_terms(normalized_query)
         if not terms:
             raise RequestError("Enter a searchable topic or lesson name")
 
-        matches = []
+        prepared_pages = []
+        document_frequency = {term: 0 for term in terms}
         for page_data in pages:
             text = str(page_data.get("text") or "")
             haystack = text.casefold()
+            term_positions = {
+                term: [match.start() for match in re.finditer(
+                    self._book_term_pattern(term), haystack, flags=re.UNICODE
+                )]
+                for term in terms
+            }
+            term_counts = {term: len(positions) for term, positions in term_positions.items()}
+            for term, count in term_counts.items():
+                if count:
+                    document_frequency[term] += 1
+            prepared_pages.append((page_data, text, haystack, term_counts, term_positions))
+
+        searchable_page_count = max(1, sum(1 for _, text, _, _, _ in prepared_pages if text))
+        inverse_frequency = {
+            term: math.log((searchable_page_count + 1) / (document_frequency[term] + 1)) + 1
+            for term in terms
+        }
+        maximum_rarity = max(1.0, sum(inverse_frequency.values()))
+        matches = []
+        required_balanced_terms = 1 if len(terms) == 1 else max(2, math.ceil(len(terms) * 0.6))
+
+        for page_data, text, haystack, term_counts, term_positions in prepared_pages:
             phrase_position = haystack.find(normalized_query)
-            matched_terms = [term for term in terms if term in haystack]
+            matched_terms = [term for term in terms if term_counts[term] > 0]
             exact_match = phrase_position >= 0
-            if not exact_match and len(matched_terms) != len(terms):
+            if mode == "exact" and not exact_match:
                 continue
+            if mode == "balanced" and not exact_match and len(matched_terms) < required_balanced_terms:
+                continue
+            if mode == "broad" and not matched_terms:
+                continue
+
+            coverage = len(matched_terms) / len(terms)
+            occurrences = sum(term_counts[term] for term in matched_terms)
+            rarity_evidence = sum(
+                inverse_frequency[term] * min(1.8, 1 + math.log(max(1, term_counts[term])) * 0.25)
+                for term in matched_terms
+            ) / maximum_rarity
+            positions = [term_positions[term][0] for term in matched_terms if term_positions[term]]
+            term_span = (max(positions) - min(positions)) if len(positions) > 1 else 0
+            proximity = 1.0 if exact_match else (max(0.0, 1 - (term_span / 600)) if len(positions) > 1 else 0.35)
+            page_number = int(page_data["page"])
+            section = self._book_outline_context(outline or [], page_number)
+            section_key = section.casefold()
+            section_matches = sum(1 for term in terms if term in section_key)
+            section_evidence = section_matches / len(terms)
+
+            relevance = (
+                (45 if exact_match else 0)
+                + (coverage * 30)
+                + (min(1.0, rarity_evidence) * 17)
+                + (proximity * 5)
+                + (section_evidence * 3)
+            )
+            if mode == "broad" and coverage < 0.5:
+                relevance *= 0.82
+            relevance_percent = max(1, min(100, round(relevance)))
+            if exact_match:
+                match_type = "Exact phrase"
+            elif coverage == 1:
+                match_type = "All concepts"
+            elif coverage >= 0.6:
+                match_type = "Strong concept match"
+            else:
+                match_type = "Related concept"
 
             position = phrase_position
             if position < 0:
-                position = min((haystack.find(term) for term in matched_terms if term in haystack), default=0)
-            occurrences = sum(haystack.count(term) for term in matched_terms)
-            score = (1000 if exact_match else 0) + (len(matched_terms) * 100) + min(occurrences, 50)
+                ranked_terms = sorted(
+                    matched_terms,
+                    key=lambda term: (-inverse_frequency[term], term_positions[term][0]),
+                )
+                position = term_positions[ranked_terms[0]][0] if ranked_terms else 0
+            score = (relevance_percent * 100) + min(occurrences, 99)
             match = {
-                "page": int(page_data["page"]),
+                "page": page_number,
                 "exact_match": exact_match,
+                "match_type": match_type,
+                "relevance": relevance_percent,
+                "term_coverage": round(coverage * 100),
                 "matched_terms": matched_terms,
                 "occurrences": occurrences,
                 "score": score,
                 "snippet": self._book_search_snippet(text, position, len(normalized_query)),
             }
-            section = self._book_outline_context(outline or [], match["page"])
             if section:
                 match["section"] = section
             matches.append(match)
@@ -2338,7 +2476,7 @@ class Handler(BaseHTTPRequestHandler):
 
         if not sample_text:
             try:
-                import fitz
+                fitz = _pymupdf_module()
                 doc = fitz.open(pdf_path)
                 pages = [pg.get_text() for pg in doc]
                 doc_text = "\n--- PAGE BREAK ---\n".join(pages)

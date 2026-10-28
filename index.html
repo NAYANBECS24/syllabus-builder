@@ -564,7 +564,15 @@ python run.py</pre>
           <input id="book-query" type="search" maxlength="160" placeholder="e.g. Binary search tree" autocomplete="off" disabled/>
           <button id="book-search-button" class="btn btn-primary" type="submit" disabled>Search</button>
         </div>
-        <p class="book-field-help">Results include the PDF page, matching terms, and nearby text for quick verification.</p>
+        <div class="book-search-mode-control">
+          <label for="book-search-mode">Research mode</label>
+          <select id="book-search-mode">
+            <option value="balanced" selected>Balanced evidence</option>
+            <option value="exact">Exact phrase only</option>
+            <option value="broad">Broad discovery</option>
+          </select>
+        </div>
+        <p class="book-field-help">Balanced mode combines phrase, concept coverage, rarity, proximity, and section evidence.</p>
       </form>
 
       <div class="book-suggestion-row" aria-label="Example searches">
@@ -572,6 +580,11 @@ python run.py</pre>
         <button type="button" data-book-query="introduction">Introduction</button>
         <button type="button" data-book-query="learning outcomes">Learning outcomes</button>
         <button type="button" data-book-query="chapter summary">Chapter summary</button>
+      </div>
+
+      <div id="book-search-insight" class="book-search-insight" hidden aria-live="polite">
+        <div><strong id="book-search-insight-title">Research intelligence</strong><span id="book-search-insight-detail">—</span></div>
+        <div id="book-search-terms" class="book-search-terms"></div>
       </div>
 
       <div class="book-results-header">
@@ -696,10 +709,36 @@ python run.py</pre>
     </section>
   </div>
 
+  <section class="finder-shelf-panel" aria-labelledby="finder-shelf-title">
+    <div class="finder-shelf-toolbar">
+      <div>
+        <div class="book-step-label">03 · Build your research set</div>
+        <h2 id="finder-shelf-title">Research shelf <span id="finder-shelf-count">0 saved</span></h2>
+        <p>Save verified editions in this browser, compare their evidence, and export publication-ready citations.</p>
+      </div>
+      <div class="finder-shelf-actions">
+        <label class="sr-only" for="finder-citation-style">Citation style</label>
+        <select id="finder-citation-style">
+          <option value="apa">APA</option>
+          <option value="mla">MLA</option>
+          <option value="bibtex">BibTeX</option>
+          <option value="ris">RIS</option>
+        </select>
+        <button id="finder-compare-shelf" class="btn btn-sm btn-secondary" type="button" disabled>Compare selected</button>
+        <button id="finder-export-shelf" class="btn btn-sm btn-ghost" type="button" disabled>Export shelf</button>
+        <button id="finder-clear-shelf" class="btn btn-sm btn-ghost" type="button" disabled>Clear</button>
+      </div>
+    </div>
+    <div id="finder-shelf" class="finder-shelf" aria-live="polite">
+      <div class="finder-shelf-empty"><strong>No saved editions yet.</strong><span>Use “Save to shelf” on a catalog result to build a durable research set.</span></div>
+    </div>
+    <div id="finder-comparison" class="finder-comparison" hidden></div>
+  </section>
+
   <section id="finder-preview-panel" class="finder-preview-panel" hidden aria-labelledby="finder-preview-title">
     <div class="finder-preview-toolbar">
       <div>
-        <div class="book-step-label">03 · Read in workspace</div>
+        <div class="book-step-label">04 · Read in workspace</div>
         <h2 id="finder-preview-title">Provider-authorized PDF preview</h2>
         <p>The PDF is loaded directly from the provider in your browser. If that provider blocks embedding, use the source link to continue there.</p>
       </div>

@@ -3,10 +3,14 @@
 const BOOK_FINDER_TIMEOUT_MS = 40000;
 const FINDER_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
 const FINDER_IMPORT_TIMEOUT_MS = 90000;
+const FINDER_SHELF_STORAGE_KEY = 'sylex.researchShelf.v1';
+const FINDER_MAX_SHELF_BOOKS = 60;
 
 const finderState = {
   abortController: null,
   references: [],
+  shelf: [],
+  comparisonIds: new Set(),
 };
 
 const finderElement = id => document.getElementById(id);
@@ -130,6 +134,345 @@ function createFinderButton(label, className, onClick) {
   button.textContent = label;
   button.addEventListener('click', onClick);
   return button;
+}
+
+function finderShelfId(record) {
+  const isbn = Array.isArray(record?.identifiers) ? record.identifiers.find(Boolean) : '';
+  if (isbn) return `isbn:${String(isbn).replace(/[^0-9X]/gi, '').toUpperCase()}`;
+  const identity = [record?.title, ...(Array.isArray(record?.authors) ? record.authors : []), record?.year]
+    .filter(Boolean)
+    .join('|')
+    .toLocaleLowerCase()
+    .replace(/[^a-z0-9|]+/g, '-')
+    .slice(0, 220);
+  return `book:${identity || Date.now()}`;
+}
+
+function normalizeShelfRecord(record) {
+  if (!record || typeof record !== 'object') return null;
+  const title = String(record.title || '').replace(/\s+/g, ' ').trim().slice(0, 240);
+  if (!title) return null;
+  const authors = (Array.isArray(record.authors) ? record.authors : [])
+    .map(author => String(author || '').replace(/\s+/g, ' ').trim().slice(0, 140))
+    .filter(Boolean)
+    .slice(0, 12);
+  const identifiers = (Array.isArray(record.identifiers) ? record.identifiers : [])
+    .map(value => String(value || '').replace(/[^0-9X]/gi, '').toUpperCase())
+    .filter(value => [10, 13].includes(value.length))
+    .slice(0, 6);
+  const normalized = {
+    title,
+    authors,
+    year: String(record.year || '').replace(/[^0-9]/g, '').slice(0, 4),
+    publisher: String(record.publisher || '').replace(/\s+/g, ' ').trim().slice(0, 180),
+    identifiers,
+    availability: String(record.availability || 'Catalog record').slice(0, 80),
+    match_confidence: Math.max(0, Math.min(99, Number(record.match_confidence) || 0)),
+    match_label: String(record.match_label || 'Catalog match').slice(0, 80),
+    detail_url: finderSafeUrl(record.detail_url),
+    view_url: finderSafeUrl(record.view_url),
+    cover_url: finderSafeUrl(record.cover_url),
+    source_names: (Array.isArray(record.source_names) ? record.source_names : (Array.isArray(record.sources) ? record.sources : []))
+      .map(source => String(typeof source === 'string' ? source : (source?.name || '')).trim())
+      .filter(Boolean)
+      .slice(0, 8),
+    saved_at: String(record.saved_at || new Date().toISOString()),
+  };
+  normalized.shelf_id = String(record.shelf_id || finderShelfId(normalized));
+  return normalized;
+}
+
+function loadFinderShelf() {
+  try {
+    const parsed = JSON.parse(window.localStorage.getItem(FINDER_SHELF_STORAGE_KEY) || '[]');
+    const seen = new Set();
+    finderState.shelf = (Array.isArray(parsed) ? parsed : [])
+      .map(normalizeShelfRecord)
+      .filter(record => record && !seen.has(record.shelf_id) && seen.add(record.shelf_id))
+      .slice(0, FINDER_MAX_SHELF_BOOKS);
+  } catch {
+    finderState.shelf = [];
+  }
+}
+
+function persistFinderShelf() {
+  try {
+    window.localStorage.setItem(FINDER_SHELF_STORAGE_KEY, JSON.stringify(finderState.shelf));
+    return true;
+  } catch {
+    finderToast('The browser could not save this research shelf', 'error');
+    return false;
+  }
+}
+
+function finderPersonApa(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return parts[0] || '';
+  const family = parts.pop();
+  const initials = parts.map(part => `${part.charAt(0).toUpperCase()}.`).join(' ');
+  return `${family}, ${initials}`;
+}
+
+function finderPeopleApa(authors) {
+  const people = authors.map(finderPersonApa).filter(Boolean);
+  if (people.length < 2) return people[0] || 'Unknown author';
+  if (people.length === 2) return `${people[0]} & ${people[1]}`;
+  return `${people.slice(0, -1).join(', ')}, & ${people[people.length - 1]}`;
+}
+
+function finderPersonMla(name) {
+  const parts = String(name || '').trim().split(/\s+/).filter(Boolean);
+  if (parts.length < 2) return parts[0] || '';
+  const family = parts.pop();
+  return `${family}, ${parts.join(' ')}`;
+}
+
+function finderCitation(record, style = 'apa') {
+  const authors = Array.isArray(record.authors) ? record.authors : [];
+  const year = record.year || 'n.d.';
+  const publisher = record.publisher || 'Publisher not identified';
+  const isbn = record.identifiers?.[0] || '';
+  const url = record.detail_url || record.view_url || '';
+  if (style === 'bibtex') {
+    const firstFamily = (authors[0] || 'book').trim().split(/\s+/).pop().replace(/[^a-z0-9]/gi, '') || 'book';
+    const firstTitle = record.title.split(/\s+/).find(word => word.length > 3)?.replace(/[^a-z0-9]/gi, '') || 'work';
+    const key = `${firstFamily}${record.year || 'nd'}${firstTitle}`;
+    const fields = [
+      `  title = {${record.title.replace(/[{}]/g, '')}}`,
+      authors.length ? `  author = {${authors.join(' and ').replace(/[{}]/g, '')}}` : '',
+      record.year ? `  year = {${record.year}}` : '',
+      record.publisher ? `  publisher = {${record.publisher.replace(/[{}]/g, '')}}` : '',
+      isbn ? `  isbn = {${isbn}}` : '',
+      url ? `  url = {${url}}` : '',
+    ].filter(Boolean);
+    return `@book{${key},\n${fields.join(',\n')}\n}`;
+  }
+  if (style === 'ris') {
+    return [
+      'TY  - BOOK',
+      ...authors.map(author => `AU  - ${author}`),
+      `TI  - ${record.title}`,
+      record.year ? `PY  - ${record.year}` : '',
+      record.publisher ? `PB  - ${record.publisher}` : '',
+      isbn ? `SN  - ${isbn}` : '',
+      url ? `UR  - ${url}` : '',
+      'ER  -',
+    ].filter(Boolean).join('\n');
+  }
+  if (style === 'mla') {
+    let authorText = 'Unknown author';
+    if (authors.length === 1) authorText = finderPersonMla(authors[0]);
+    else if (authors.length === 2) authorText = `${finderPersonMla(authors[0])}, and ${authors[1]}`;
+    else if (authors.length > 2) authorText = `${finderPersonMla(authors[0])}, et al.`;
+    return `${authorText}. ${record.title}. ${publisher}${record.year ? `, ${record.year}` : ''}.${isbn ? ` ISBN ${isbn}.` : ''}`;
+  }
+  const authorText = finderPeopleApa(authors);
+  return `${authorText} (${year}). ${record.title}. ${publisher}.${isbn ? ` ISBN ${isbn}.` : ''}`;
+}
+
+async function copyFinderCitation(record) {
+  const style = finderElement('finder-citation-style')?.value || 'apa';
+  const citation = finderCitation(record, style);
+  try {
+    await navigator.clipboard.writeText(citation);
+  } catch {
+    const input = document.createElement('textarea');
+    input.value = citation;
+    input.setAttribute('readonly', '');
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.append(input);
+    input.select();
+    document.execCommand('copy');
+    input.remove();
+  }
+  finderToast(`${style.toUpperCase()} citation copied`, 'success');
+}
+
+function downloadFinderShelf() {
+  if (!finderState.shelf.length) return;
+  const style = finderElement('finder-citation-style')?.value || 'apa';
+  const separator = style === 'ris' ? '\n\n' : '\n\n';
+  const content = finderState.shelf.map(record => finderCitation(record, style)).join(separator);
+  const extension = style === 'bibtex' ? 'bib' : style === 'ris' ? 'ris' : 'txt';
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = `sylex-research-shelf-${style}.${extension}`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  URL.revokeObjectURL(url);
+  finderToast(`${finderState.shelf.length} citation${finderState.shelf.length === 1 ? '' : 's'} exported`, 'success');
+}
+
+function syncFinderShelfButtons() {
+  document.querySelectorAll('[data-shelf-id]').forEach(button => {
+    const saved = finderState.shelf.some(record => record.shelf_id === button.dataset.shelfId);
+    button.classList.toggle('saved', saved);
+    button.textContent = saved ? 'Saved to shelf ✓' : 'Save to shelf';
+    button.setAttribute('aria-pressed', String(saved));
+  });
+}
+
+function toggleFinderShelfRecord(record) {
+  const normalized = normalizeShelfRecord(record);
+  if (!normalized) return;
+  const existingIndex = finderState.shelf.findIndex(item => item.shelf_id === normalized.shelf_id);
+  if (existingIndex >= 0) {
+    finderState.shelf.splice(existingIndex, 1);
+    finderState.comparisonIds.delete(normalized.shelf_id);
+    finderToast('Edition removed from research shelf', 'info');
+  } else {
+    if (finderState.shelf.length >= FINDER_MAX_SHELF_BOOKS) {
+      finderToast(`The research shelf supports up to ${FINDER_MAX_SHELF_BOOKS} editions`, 'error');
+      return;
+    }
+    finderState.shelf.unshift(normalized);
+    finderToast('Edition saved to research shelf', 'success');
+  }
+  persistFinderShelf();
+  renderFinderShelf();
+  syncFinderShelfButtons();
+}
+
+function useShelfRecord(record) {
+  const title = finderElement('finder-title');
+  const author = finderElement('finder-author');
+  const isbn = finderElement('finder-isbn');
+  if (title) title.value = record.title;
+  if (author) author.value = record.authors?.[0] || '';
+  if (isbn) isbn.value = record.identifiers?.[0] || '';
+  finderElement('finder-search-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  window.setTimeout(() => searchFinder(), 250);
+}
+
+function createFinderShelfCard(record) {
+  const card = document.createElement('article');
+  card.className = 'finder-shelf-card';
+  const select = document.createElement('label');
+  select.className = 'finder-shelf-select';
+  const checkbox = document.createElement('input');
+  checkbox.type = 'checkbox';
+  checkbox.checked = finderState.comparisonIds.has(record.shelf_id);
+  checkbox.setAttribute('aria-label', `Select ${record.title} for comparison`);
+  checkbox.addEventListener('change', () => {
+    if (checkbox.checked && finderState.comparisonIds.size >= 3) {
+      checkbox.checked = false;
+      finderToast('Compare up to three editions at a time', 'info');
+      return;
+    }
+    if (checkbox.checked) finderState.comparisonIds.add(record.shelf_id);
+    else finderState.comparisonIds.delete(record.shelf_id);
+    renderFinderShelf();
+  });
+  const selectText = document.createElement('span');
+  selectText.textContent = 'Compare';
+  select.append(checkbox, selectText);
+  const identity = document.createElement('div');
+  identity.className = 'finder-shelf-identity';
+  const title = document.createElement('strong');
+  title.textContent = record.title;
+  const details = document.createElement('span');
+  const authors = record.authors?.length ? record.authors.join(', ') : 'Author not listed';
+  details.textContent = [authors, record.year, record.publisher, record.identifiers?.[0] ? `ISBN ${record.identifiers[0]}` : ''].filter(Boolean).join(' · ');
+  identity.append(title, details);
+  const evidence = document.createElement('div');
+  evidence.className = 'finder-shelf-evidence';
+  evidence.textContent = `${record.match_confidence}% · ${record.availability} · ${record.source_names.length || 1} source${record.source_names.length === 1 ? '' : 's'}`;
+  const actions = document.createElement('div');
+  actions.className = 'finder-shelf-card-actions';
+  actions.append(
+    createFinderButton('Copy citation', 'finder-action', () => copyFinderCitation(record)),
+    createFinderButton('Find again', 'finder-action', () => useShelfRecord(record)),
+    createFinderButton('Remove', 'finder-action finder-action-danger', () => toggleFinderShelfRecord(record)),
+  );
+  card.append(select, identity, evidence, actions);
+  return card;
+}
+
+function renderFinderComparison() {
+  const panel = finderElement('finder-comparison');
+  if (!panel) return;
+  const selected = finderState.shelf.filter(record => finderState.comparisonIds.has(record.shelf_id));
+  if (selected.length < 2) {
+    panel.hidden = true;
+    panel.replaceChildren();
+    return;
+  }
+  const heading = document.createElement('div');
+  heading.className = 'finder-comparison-heading';
+  const title = document.createElement('strong');
+  title.textContent = `Evidence comparison · ${selected.length} editions`;
+  const close = createFinderButton('Close comparison', 'btn btn-sm btn-ghost', () => {
+    finderState.comparisonIds.clear();
+    renderFinderShelf();
+  });
+  heading.append(title, close);
+  const tableWrap = document.createElement('div');
+  tableWrap.className = 'finder-comparison-table-wrap';
+  const table = document.createElement('table');
+  const rows = [
+    ['Title', record => record.title],
+    ['Authors', record => record.authors.join(', ') || 'Not listed'],
+    ['Year', record => record.year || '—'],
+    ['Publisher', record => record.publisher || '—'],
+    ['ISBN', record => record.identifiers[0] || '—'],
+    ['Confidence', record => `${record.match_confidence}% · ${record.match_label}`],
+    ['Access', record => record.availability],
+    ['Catalog evidence', record => record.source_names.join(', ') || '1 catalog source'],
+  ];
+  rows.forEach(([label, value]) => {
+    const row = document.createElement('tr');
+    const header = document.createElement('th');
+    header.scope = 'row';
+    header.textContent = label;
+    row.append(header, ...selected.map(record => {
+      const cell = document.createElement('td');
+      cell.textContent = value(record);
+      return cell;
+    }));
+    table.append(row);
+  });
+  tableWrap.append(table);
+  panel.replaceChildren(heading, tableWrap);
+  panel.hidden = false;
+}
+
+function renderFinderShelf() {
+  const shelf = finderElement('finder-shelf');
+  const count = finderElement('finder-shelf-count');
+  const compare = finderElement('finder-compare-shelf');
+  const exportButton = finderElement('finder-export-shelf');
+  const clear = finderElement('finder-clear-shelf');
+  const validIds = new Set(finderState.shelf.map(record => record.shelf_id));
+  finderState.comparisonIds.forEach(id => {
+    if (!validIds.has(id)) finderState.comparisonIds.delete(id);
+  });
+  if (count) count.textContent = `${finderState.shelf.length} saved`;
+  if (compare) {
+    compare.disabled = finderState.comparisonIds.size < 2;
+    compare.textContent = finderState.comparisonIds.size
+      ? `Compare selected (${finderState.comparisonIds.size})`
+      : 'Compare selected';
+  }
+  if (exportButton) exportButton.disabled = !finderState.shelf.length;
+  if (clear) clear.disabled = !finderState.shelf.length;
+  if (shelf) {
+    if (finderState.shelf.length) shelf.replaceChildren(...finderState.shelf.map(createFinderShelfCard));
+    else {
+      const empty = document.createElement('div');
+      empty.className = 'finder-shelf-empty';
+      const heading = document.createElement('strong');
+      heading.textContent = 'No saved editions yet.';
+      const detail = document.createElement('span');
+      detail.textContent = 'Use “Save to shelf” on a catalog result to build a durable research set.';
+      empty.append(heading, detail);
+      shelf.replaceChildren(empty);
+    }
+  }
+  renderFinderComparison();
 }
 
 function closeFinderPreview() {
@@ -319,6 +662,11 @@ function createFinderResult(record) {
 
   const actions = document.createElement('div');
   actions.className = 'finder-actions';
+  const shelfId = normalizeShelfRecord(record)?.shelf_id || finderShelfId(record);
+  const saved = finderState.shelf.some(item => item.shelf_id === shelfId);
+  const save = createFinderButton(saved ? 'Saved to shelf ✓' : 'Save to shelf', `finder-action finder-action-save${saved ? ' saved' : ''}`, () => toggleFinderShelfRecord(record));
+  save.dataset.shelfId = shelfId;
+  save.setAttribute('aria-pressed', String(saved));
   const view = createFinderLink(record.availability === 'Preview available' ? 'Preview book ↗' : 'View / read ↗', record.view_url, 'finder-action finder-action-primary');
   const download = createFinderLink('Download legal PDF ↗', record.download_url, 'finder-action finder-action-download');
   const workspacePreview = record.download_url
@@ -328,6 +676,7 @@ function createFinderResult(record) {
     ? createFinderButton('Analyze in Book Explorer', 'finder-action finder-action-inspect', event => importFinderPdf(record, event.currentTarget))
     : null;
   const details = createFinderLink('Catalog details ↗', record.detail_url, 'finder-action');
+  actions.append(save);
   if (view) actions.append(view);
   if (workspacePreview) actions.append(workspacePreview);
   if (inspect) actions.append(inspect);
@@ -528,6 +877,8 @@ async function searchFinder(event) {
 function initBookFinder() {
   const form = finderElement('finder-search-form');
   if (!form) return;
+  loadFinderShelf();
+  renderFinderShelf();
   form.addEventListener('submit', searchFinder);
   finderElement('finder-load-references')?.addEventListener('click', loadFinderReferences);
   finderElement('finder-use-reference')?.addEventListener('click', useFinderReference);
@@ -536,6 +887,20 @@ function initBookFinder() {
     finderElement('finder-use-reference').disabled = !selected;
   });
   finderElement('finder-preview-close')?.addEventListener('click', closeFinderPreview);
+  finderElement('finder-compare-shelf')?.addEventListener('click', () => {
+    renderFinderComparison();
+    finderElement('finder-comparison')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+  finderElement('finder-export-shelf')?.addEventListener('click', downloadFinderShelf);
+  finderElement('finder-clear-shelf')?.addEventListener('click', () => {
+    if (!finderState.shelf.length || !window.confirm('Clear every saved edition from this browser?')) return;
+    finderState.shelf = [];
+    finderState.comparisonIds.clear();
+    persistFinderShelf();
+    renderFinderShelf();
+    syncFinderShelfButtons();
+    finderToast('Research shelf cleared', 'info');
+  });
 }
 
 window.openBookFinder = openBookFinder;

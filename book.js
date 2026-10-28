@@ -65,6 +65,8 @@ function resetBookSearch() {
   const outlineCount = bookElement('book-outline-count');
   if (outlineCount) outlineCount.textContent = 'Search a book to detect headings';
   setBookOutlineEmpty('Detected chapters, units, lessons, and numbered sections appear here.');
+  const insight = bookElement('book-search-insight');
+  if (insight) insight.hidden = true;
 }
 
 function setBookViewerLoading(isLoading, message = 'Opening full book…') {
@@ -165,17 +167,21 @@ function clearBookFile() {
   const outlineCount = bookElement('book-outline-count');
   if (outlineCount) outlineCount.textContent = 'Upload a book to begin';
   setBookOutlineEmpty('Select a book PDF before viewing its contents.');
+  const insight = bookElement('book-search-insight');
+  if (insight) insight.hidden = true;
   showBookViewerEmpty();
 }
 
 function setBookSearchBusy(isBusy) {
   const button = bookElement('book-search-button');
   const query = bookElement('book-query');
+  const mode = bookElement('book-search-mode');
   if (button) {
     button.disabled = isBusy || !window.STATE.bookFile;
     button.textContent = isBusy ? 'Searching…' : 'Search';
   }
   if (query) query.setAttribute('aria-busy', String(isBusy));
+  if (mode) mode.disabled = isBusy;
 }
 
 async function ensureBookSearchService() {
@@ -200,7 +206,7 @@ function createBookResult(result) {
   page.textContent = `Page ${result.page}`;
   const confidence = document.createElement('span');
   confidence.className = `book-match-badge${result.exact_match ? ' exact' : ''}`;
-  confidence.textContent = result.exact_match ? 'Exact phrase' : 'All terms';
+  confidence.textContent = result.match_type || (result.exact_match ? 'Exact phrase' : 'Concept match');
   top.append(page, confidence);
 
   const snippet = document.createElement('span');
@@ -214,7 +220,9 @@ function createBookResult(result) {
   const terms = document.createElement('span');
   terms.className = 'book-result-terms';
   const matchedTerms = Array.isArray(result.matched_terms) ? result.matched_terms : [];
-  terms.textContent = matchedTerms.length ? `Matched: ${matchedTerms.join(' · ')}` : 'Topic match';
+  const relevance = Number(result.relevance) || 0;
+  const coverage = Number(result.term_coverage) || 0;
+  terms.textContent = `${relevance}% relevance · ${coverage}% concept coverage${matchedTerms.length ? ` · ${matchedTerms.join(' · ')}` : ''}`;
 
   item.append(top, section, snippet, terms);
   item.addEventListener('click', () => openBookPage(result.page, item, true));
@@ -262,6 +270,37 @@ function renderBookOutline(outline) {
   list.replaceChildren(...entries.map(createBookOutlineItem));
 }
 
+function renderBookSearchInsight(data) {
+  const panel = bookElement('book-search-insight');
+  const title = bookElement('book-search-insight-title');
+  const detail = bookElement('book-search-insight-detail');
+  const terms = bookElement('book-search-terms');
+  if (!panel || !title || !detail || !terms) return;
+  const plan = data?.search_plan || {};
+  const health = data?.index_health || {};
+  const modeLabels = {
+    balanced: 'Balanced evidence search',
+    exact: 'Exact phrase search',
+    broad: 'Broad discovery search',
+  };
+  title.textContent = modeLabels[plan.mode] || 'Research intelligence';
+  const searchablePercent = Number(health.searchable_percent);
+  const coverageText = Number.isFinite(searchablePercent)
+    ? `${searchablePercent}% of the PDF is text-searchable`
+    : 'PDF index prepared';
+  const warning = health.status === 'limited'
+    ? ' · scanned pages may require OCR'
+    : health.status === 'partial' ? ' · some pages contain no extractable text' : '';
+  detail.textContent = `${plan.strategy || 'Evidence-ranked page search'} · ${coverageText}${warning}`;
+  const queryTerms = Array.isArray(plan.terms) ? plan.terms : [];
+  terms.replaceChildren(...queryTerms.map(term => {
+    const chip = document.createElement('span');
+    chip.textContent = term;
+    return chip;
+  }));
+  panel.hidden = false;
+}
+
 function renderBookResults(data) {
   const results = Array.isArray(data.results) ? data.results : [];
   const list = bookElement('book-search-results');
@@ -279,6 +318,7 @@ function renderBookResults(data) {
     const indexed = `${data.searchable_pages || 0} of ${pageCount} pages searchable`;
     status.textContent = data.cached ? `Index reused · ${indexed}` : indexed;
   }
+  renderBookSearchInsight(data);
   renderBookOutline(data.outline);
 
   if (!list) return;
@@ -335,6 +375,7 @@ async function searchBook(event) {
   event?.preventDefault();
   const file = window.STATE?.bookFile;
   const query = bookElement('book-query')?.value.trim() || '';
+  const mode = bookElement('book-search-mode')?.value || 'balanced';
   if (!file) {
     bookToast('Upload a book PDF before searching', 'error');
     return;
@@ -357,6 +398,7 @@ async function searchBook(event) {
   const formData = new FormData();
   formData.append('book', file, file.name);
   formData.append('query', query);
+  formData.append('mode', mode);
   setBookSearchBusy(true);
   setBookSearchStatus('Searching pages…');
 
