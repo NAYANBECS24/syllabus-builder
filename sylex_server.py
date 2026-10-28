@@ -38,10 +38,13 @@ MAX_BOOK_DISCOVERY_RESULTS = 24
 OPEN_LIBRARY_CANDIDATE_LIMIT = 100
 GOOGLE_BOOKS_CANDIDATE_LIMIT = 40
 INTERNET_ARCHIVE_CANDIDATE_LIMIT = 36
+CROSSREF_CANDIDATE_LIMIT = 30
 OPEN_LIBRARY_RETRY_CANDIDATE_LIMIT = 24
 BOOK_DISCOVERY_CACHE_TTL_SECONDS = 15 * 60
 CATALOG_REQUEST_TIMEOUT_SECONDS = 8
 MAX_ARCHIVE_PDF_LOOKUPS = 3
+MIN_CATALOG_TITLE_CONFIDENCE = 40
+MIN_CATALOG_AUTHOR_CONFIDENCE = 65
 STATIC_FILES = {
     "index.html", "styles.css", "app.js", "book.js", "book-finder.js", "demo-data.js", "chat.js", "chat.css"
 }
@@ -101,6 +104,7 @@ _load_local_env()
 # settings (or a local .env). Request-supplied keys take precedence.
 DEFAULT_NVIDIA_API_KEY = os.environ.get("NVIDIA_API_KEY", "").strip()
 DEFAULT_GOOGLE_BOOKS_API_KEY = os.environ.get("GOOGLE_BOOKS_API_KEY", "").strip()
+DEFAULT_CROSSREF_MAILTO = os.environ.get("CROSSREF_MAILTO", "").strip()
 
 # Where the prompt lives locally vs. inside a Vercel function bundle, where the
 # working directory is not the repo root. Bundled with functions["api/*.py"]
@@ -1885,6 +1889,72 @@ class Handler(BaseHTTPRequestHandler):
             })
         return records, self._catalog_total(result.get("numFound"), len(records))
 
+    def _search_crossref_catalog(self, title: str, author: str, isbn: str = "") -> Tuple[List[Dict[str, Any]], int]:
+        """Search Crossref's keyless scholarly-book metadata index."""
+        params = {
+            "rows": str(CROSSREF_CANDIDATE_LIMIT),
+            "filter": "type:book",
+            "select": "DOI,title,author,publisher,published-print,published-online,created,type,URL,ISBN",
+            "sort": "score",
+            "order": "desc",
+        }
+        if isbn:
+            params["query.bibliographic"] = isbn
+        else:
+            params["query.title"] = title
+            if author:
+                params["query.author"] = author
+        if DEFAULT_CROSSREF_MAILTO:
+            params["mailto"] = DEFAULT_CROSSREF_MAILTO
+        url = "https://api.crossref.org/v1/works?" + urllib.parse.urlencode(params)
+        response = self._catalog_json_request(url, "Crossref")
+        message = response.get("message") if isinstance(response.get("message"), dict) else {}
+        items = message.get("items") if isinstance(message.get("items"), list) else []
+        records = []
+        for item in items[:CROSSREF_CANDIDATE_LIMIT]:
+            if not isinstance(item, dict) or item.get("type") != "book":
+                continue
+            title_values = item.get("title", [])
+            if not isinstance(title_values, list):
+                title_values = [title_values]
+            record_title = self._catalog_text(title_values[0] if title_values else "")
+            doi = self._catalog_text(item.get("DOI"), 180)
+            if not record_title or not doi:
+                continue
+            authors = []
+            for entry in item.get("author", []) if isinstance(item.get("author"), list) else []:
+                if not isinstance(entry, dict):
+                    continue
+                name = self._catalog_text(" ".join(part for part in (entry.get("given"), entry.get("family")) if part), 120)
+                if name and name not in authors:
+                    authors.append(name)
+            year = ""
+            for field in ("published-print", "published-online", "created"):
+                date_data = item.get(field) if isinstance(item.get(field), dict) else {}
+                date_parts = date_data.get("date-parts") if isinstance(date_data.get("date-parts"), list) else []
+                if date_parts and isinstance(date_parts[0], list) and date_parts[0]:
+                    year = self._catalog_year(date_parts[0][0])
+                if year:
+                    break
+            detail_url = f"https://doi.org/{urllib.parse.quote(doi, safe='/()')}"
+            records.append({
+                "id": f"crossref:{doi}",
+                "title": record_title,
+                "authors": authors,
+                "year": year,
+                "publisher": self._catalog_text(item.get("publisher")),
+                "availability": "DOI record",
+                "view_url": detail_url,
+                "detail_url": detail_url,
+                "download_url": "",
+                "archive_identifier": "",
+                "identifiers": self._catalog_isbns(item.get("ISBN", [])),
+                "edition_count": 1,
+                "cover_url": "",
+                "sources": [{"name": "Crossref", "url": detail_url}],
+            })
+        return records, self._catalog_total(message.get("total-results"), len(records))
+
     def _catalog_match_score(self, record: Dict[str, Any], title: str, author: str,
                              isbn: str = "") -> Tuple[int, str, Dict[str, int]]:
         query_title = self._catalog_key(title)
@@ -1965,6 +2035,28 @@ class Handler(BaseHTTPRequestHandler):
         if first_isbns & second_isbns:
             return True
         return self._catalog_edition_key(first) == self._catalog_edition_key(second)
+
+    def _catalog_record_relevant(self, record: Dict[str, Any], title: str,
+                                 author: str, isbn: str = "") -> bool:
+        """Apply the final evidence gate before a candidate reaches the UI."""
+        if isbn:
+            return isbn in self._catalog_isbns(record.get("identifiers", []))
+        if not title:
+            return False
+        metrics = record.get("_match_metrics") or {}
+        title_confidence = int(metrics.get("title", 0))
+        author_confidence = int(metrics.get("author", 0))
+        if record.get("match_label") == "Exact match":
+            return True
+        if not author:
+            return title_confidence >= MIN_CATALOG_TITLE_CONFIDENCE
+        return (
+            title_confidence >= 55
+            and (
+                author_confidence >= MIN_CATALOG_AUTHOR_CONFIDENCE
+                or (title_confidence >= 95 and author_confidence >= 25)
+            )
+        )
 
     def _merge_catalog_records(self, records: List[Dict[str, Any]], title: str, author: str,
                                isbn: str = "") -> List[Dict[str, Any]]:
@@ -2100,6 +2192,7 @@ class Handler(BaseHTTPRequestHandler):
             ("Open Library", self._search_open_library_catalog),
             ("Google Books", self._search_google_books_catalog),
             ("Internet Archive", self._search_internet_archive_catalog),
+            ("Crossref", self._search_crossref_catalog),
         )
         # Independent catalog calls run concurrently so a slow provider does not
         # hold the entire discovery agent hostage.
@@ -2138,6 +2231,12 @@ class Handler(BaseHTTPRequestHandler):
                 })
 
         records = self._merge_catalog_records(all_records, title, author, isbn)
+        unfiltered_count = len(records)
+        records = [
+            record for record in records
+            if self._catalog_record_relevant(record, title, author, isbn)
+        ]
+        discarded_count = max(0, unfiltered_count - len(records))
         records.sort(key=lambda item: (-item["match_score"], item["title"].casefold()))
         self._add_archive_pdf_links(records)
         for record in records:
@@ -2160,6 +2259,9 @@ class Handler(BaseHTTPRequestHandler):
             record["is_best_match"] = position == 0 and record.get("match_confidence", 0) >= 70
             public_records.append(record)
         reported_catalog_hits = sum(item.get("catalog_hits", 0) for item in provider_status if item["status"] == "available")
+        available_providers = sum(1 for item in provider_status if item["status"] == "available")
+        downloadable_results = sum(1 for item in public_records if item.get("download_url"))
+        strategy = "ISBN-first exact edition resolution" if isbn else "Adaptive title and author discovery"
         payload = {
             "query": {"title": title, "author": author, "isbn": isbn},
             "results": public_records,
@@ -2170,10 +2272,20 @@ class Handler(BaseHTTPRequestHandler):
                 "catalog_hits_reported": reported_catalog_hits,
                 "result_limit": MAX_BOOK_DISCOVERY_RESULTS,
                 "providers_checked": len(provider_status),
+                "low_confidence_discarded": discarded_count,
+            },
+            "agent": {
+                "strategy": strategy,
+                "stages": [
+                    {"name": "Normalize", "detail": "ISBN checksum and citation fields validated" if isbn else "Title and author normalized"},
+                    {"name": "Fan out", "detail": f"{available_providers} of {len(provider_status)} catalog APIs responded"},
+                    {"name": "Resolve", "detail": f"{len(records)} edition-aware candidates retained; {discarded_count} weak matches removed"},
+                    {"name": "Verify access", "detail": f"{downloadable_results} provider PDF files verified"},
+                ],
             },
             "cached": False,
             "fallback_links": self._catalog_fallback_links(title, author, isbn) if not public_records else [],
-            "legal_notice": "The discovery agent checks Open Library, Google Books, and Internet Archive. PDF previews and downloads appear only when the provider exposes a public file; it does not crawl or link to unauthorized copies.",
+            "legal_notice": "The discovery crawler checks Open Library, Google Books, Internet Archive, and Crossref. PDF previews and downloads appear only when a provider exposes a public file; metadata-only sources improve matching without inventing access links.",
         }
         BOOK_DISCOVERY_CACHE.set(cache_key, {
             "stored_at": time.monotonic(),

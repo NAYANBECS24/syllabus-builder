@@ -657,7 +657,7 @@ python run.py</pre>
       <div class="finder-guidance">
         <strong>What you get</strong>
         <ul>
-          <li>Parallel checks across Open Library, Google Books, and Internet Archive</li>
+          <li>Parallel checks across Open Library, Google Books, Internet Archive, and Crossref</li>
           <li>Transparent title, author, edition, and catalog-verification confidence</li>
           <li>Edition-aware alternatives when an exact access option is unavailable</li>
           <li>In-workspace previews, local Book Explorer analysis, and downloads only for provider-authorized PDFs</li>
@@ -681,11 +681,15 @@ python run.py</pre>
           </div>
         </div>
       </div>
+      <div id="finder-agent-trace" class="finder-agent-trace" aria-live="polite">
+        <strong>Discovery crawler</strong>
+        <span>Waiting for a title, author, or ISBN.</span>
+      </div>
       <div id="finder-results" class="finder-results" aria-live="polite">
         <div class="finder-empty-state">
           <div class="finder-empty-icon" aria-hidden="true">⌕</div>
           <strong>Search a book to compare trusted sources.</strong>
-          <span>Results combine public Open Library and Google Books catalog records. Legal PDF downloads appear only when a provider supplies a direct PDF.</span>
+          <span>Results combine four catalog APIs, remove weak matches, and merge evidence for the same edition. PDF actions appear only when a provider supplies a direct file.</span>
         </div>
       </div>
       <footer id="finder-legal-note" class="finder-legal-note">Availability depends on the provider, book edition, and your region. This finder does not link to unauthorized copies.</footer>

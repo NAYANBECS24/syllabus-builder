@@ -54,6 +54,30 @@ function setFinderSummary(message) {
   if (summary) summary.textContent = message;
 }
 
+function renderFinderTrace(agent) {
+  const trace = finderElement('finder-agent-trace');
+  if (!trace) return;
+  const heading = document.createElement('strong');
+  heading.textContent = agent?.strategy || 'Discovery crawler';
+  const stages = Array.isArray(agent?.stages) ? agent.stages : [];
+  const stageElements = stages.map(stage => {
+    const item = document.createElement('span');
+    item.className = 'finder-agent-stage';
+    const name = document.createElement('b');
+    name.textContent = stage?.name || 'Stage';
+    const detail = document.createElement('small');
+    detail.textContent = stage?.detail || '';
+    item.append(name, detail);
+    return item;
+  });
+  if (!stageElements.length) {
+    const waiting = document.createElement('span');
+    waiting.textContent = 'Waiting for a title, author, or ISBN.';
+    stageElements.push(waiting);
+  }
+  trace.replaceChildren(heading, ...stageElements);
+}
+
 function formatFinderNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat().format(number) : '0';
@@ -70,10 +94,11 @@ function setFinderCoverage(coverage) {
     return;
   }
   const uniqueCount = Number(coverage?.unique_books_ranked) || 0;
+  const discardedCount = Number(coverage?.low_confidence_discarded) || 0;
   const reportedHits = Number(coverage?.catalog_hits_reported) || 0;
   value.textContent = `${formatFinderNumber(candidateCount)} candidates scored`;
   const providersChecked = Number(coverage?.providers_checked) || 0;
-  detail.textContent = `${formatFinderNumber(uniqueCount)} edition-aware matches${reportedHits ? ` · ${formatFinderNumber(reportedHits)} provider records reported` : ''}${providersChecked ? ` · ${providersChecked} sources checked` : ''}`;
+  detail.textContent = `${formatFinderNumber(uniqueCount)} edition-aware matches${discardedCount ? ` · ${formatFinderNumber(discardedCount)} weak matches removed` : ''}${reportedHits ? ` · ${formatFinderNumber(reportedHits)} provider records reported` : ''}${providersChecked ? ` · ${providersChecked} sources checked` : ''}`;
   panel.hidden = false;
 }
 
@@ -323,6 +348,7 @@ function renderFinderResults(data) {
   }).join(' · ');
   setFinderProviderStatus(providerSummary || 'Catalog search complete');
   setFinderCoverage(data.coverage);
+  renderFinderTrace(data.agent);
   const coverage = data.coverage || {};
   const candidateCount = Number(coverage.candidates_evaluated) || 0;
   const queryLabel = data.query?.title || data.query?.isbn || '';
@@ -467,6 +493,10 @@ async function searchFinder(event) {
   closeFinderPreview();
   setFinderProviderStatus('Searching trusted public catalogs…');
   setFinderSummary('Finding the closest title and author match, then checking alternatives and provider-authorized access.');
+  renderFinderTrace({
+    strategy: isbn ? 'ISBN-first exact edition resolution' : 'Adaptive title and author discovery',
+    stages: [{ name: 'Running', detail: 'Querying catalog APIs in parallel and validating candidates…' }],
+  });
   try {
     const baseUrl = String(window.STATE.serverUrl || window.location.origin).replace(/\/$/, '');
     const response = await fetch(`${baseUrl}/api/book-discovery`, {

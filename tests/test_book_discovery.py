@@ -124,6 +124,58 @@ class BookDiscoveryTests(unittest.TestCase):
         self.assertEqual(len(merged), 1)
         self.assertEqual(len(merged[0]["sources"]), 2)
 
+    def test_low_confidence_candidate_is_removed(self):
+        record = self.record(title="Completely Unrelated Biology Handbook")
+        merged = self.handler._merge_catalog_records(
+            [record], "Introduction to Algorithms", "Thomas H. Cormen"
+        )
+
+        self.assertFalse(
+            self.handler._catalog_record_relevant(
+                merged[0], "Introduction to Algorithms", "Thomas H. Cormen"
+            )
+        )
+
+    def test_title_overlap_does_not_override_unrelated_author(self):
+        record = self.record(
+            title="Introduction to Numerical Algorithms",
+            authors=["Different Researcher"],
+        )
+        merged = self.handler._merge_catalog_records(
+            [record], "Introduction to Algorithms", "Thomas H. Cormen"
+        )
+
+        self.assertFalse(
+            self.handler._catalog_record_relevant(
+                merged[0], "Introduction to Algorithms", "Thomas H. Cormen"
+            )
+        )
+
+    def test_crossref_book_metadata_becomes_catalog_record(self):
+        response = {
+            "message": {
+                "total-results": 1,
+                "items": [{
+                    "DOI": "10.1007/978-3-030-00000-0",
+                    "title": ["Reliable Distributed Systems"],
+                    "author": [{"given": "Ada", "family": "Lovelace"}],
+                    "publisher": "Example Academic Press",
+                    "published-print": {"date-parts": [[2024, 4, 1]]},
+                    "type": "book",
+                    "ISBN": ["9780262046305"],
+                }],
+            }
+        }
+        with patch.object(self.handler, "_catalog_json_request", return_value=response):
+            records, total = self.handler._search_crossref_catalog(
+                "Reliable Distributed Systems", "Ada Lovelace"
+            )
+
+        self.assertEqual(total, 1)
+        self.assertEqual(records[0]["authors"], ["Ada Lovelace"])
+        self.assertEqual(records[0]["year"], "2024")
+        self.assertEqual(records[0]["sources"][0]["name"], "Crossref")
+
     def test_restricted_archive_items_never_offer_a_pdf(self):
         metadata = {
             "metadata": {"access-restricted": "true"},
