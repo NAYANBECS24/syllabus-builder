@@ -92,7 +92,7 @@ function renderFinderConfiguration(configuration) {
   if (keyless.length) {
     const item = document.createElement('span');
     item.className = 'configured';
-    item.textContent = `${keyless.length} no-key sources active`;
+    item.textContent = `${keyless.length} sources need no key`;
     item.title = keyless.join(', ');
     items.push(item);
   }
