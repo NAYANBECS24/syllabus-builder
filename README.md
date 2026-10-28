@@ -92,7 +92,21 @@ The web UI provides a professional workspace for uploading PDFs, reviewing extra
 - A service outage is shown clearly and never replaced with simulated extraction results.
 - The sample dataset is available only through the explicit **View sample analysis** action and is always labeled as sample data.
 - **Book Explorer** accepts a text-based book PDF and offers balanced, exact-phrase, and broad-discovery research modes. Its evidence-weighted ranking combines phrase matches, meaningful-term coverage, rare-term strength, proximity, and detected section context; every result reports relevance and concept coverage. The workspace also reports PDF index health, flags pages that may require OCR, builds a clickable chapter/lesson outline, and opens the complete original PDF at any result. The original PDF stays in browser memory for previewing; the search endpoint receives it per query and keeps only a short-lived in-memory text index for reuse.
-- **Book Finder** is a bounded multi-API discovery crawler for Open Library, Google Books, Internet Archive, and Crossref. It supports title/author discovery and ISBN-first exact-edition matching, retries overly narrow searches, rejects weak candidates, merges catalog evidence, and displays each search stage. Verified results can be saved to a browser-persistent **Research Shelf**, compared across metadata/access/evidence, and exported as APA, MLA, BibTeX, or RIS citations. Cover metadata, in-workspace PDF preview, direct download, and a handoff to Book Explorer are shown whenever a provider exposes them. Configure `GOOGLE_BOOKS_API_KEY` for higher Google Books quota and `CROSSREF_MAILTO` for Crossref's polite API pool.
+- **Book Finder** is a bounded six-source discovery agent for Open Library, Google Books, Internet Archive, Project Gutenberg, DOAB, and Crossref. It supports title/author discovery and ISBN-first exact-edition matching, retries overly narrow searches, rejects weak candidates, merges independent catalog evidence, and displays each search stage. Verified results can be saved to a browser-persistent **Research Shelf**, compared across metadata/access/evidence, and exported as APA, MLA, BibTeX, or RIS citations. Provider-authorized PDF/EPUB files can be previewed or downloaded in the workspace, while public PDFs can be handed directly to Book Explorer for analysis.
+
+### Book provider configuration
+
+Copy `.env.example` to `.env` for local development, or add the same values to the deployment environment:
+
+```env
+# Required only for the Google Books provider
+GOOGLE_BOOKS_API_KEY=your_restricted_google_books_key
+
+# Recommended for Crossref's polite API pool
+CROSSREF_MAILTO=your_monitored_email@example.com
+```
+
+Open Library, Internet Archive, Project Gutenberg, DOAB, and Crossref do not require API keys. Google Books remains disabled until `GOOGLE_BOOKS_API_KEY` is supplied, rather than repeatedly exhausting anonymous quota. `CROSSREF_MAILTO` is optional, but recommended for reliable identification and service notices. Secrets stay server-side and must never be committed. Provider-specific outages or network blocks are reported in the Book Finder status panel while the other catalogs continue searching.
 
 ---
 

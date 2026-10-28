@@ -82,6 +82,39 @@ function renderFinderTrace(agent) {
   trace.replaceChildren(heading, ...stageElements);
 }
 
+function renderFinderConfiguration(configuration) {
+  const panel = finderElement('finder-provider-setup');
+  if (!panel) return;
+  const heading = document.createElement('strong');
+  heading.textContent = 'Provider setup';
+  const items = [];
+  const keyless = Array.isArray(configuration?.keyless_sources) ? configuration.keyless_sources : [];
+  if (keyless.length) {
+    const item = document.createElement('span');
+    item.className = 'configured';
+    item.textContent = `${keyless.length} no-key sources active`;
+    item.title = keyless.join(', ');
+    items.push(item);
+  }
+  for (const [label, provider] of [
+    ['Google Books', configuration?.google_books],
+    ['Crossref', configuration?.crossref],
+  ]) {
+    if (!provider?.state) continue;
+    const item = document.createElement('span');
+    item.className = provider.state;
+    item.textContent = `${label}: ${provider.state === 'configured' ? 'configured' : provider.state === 'required' ? 'setup required' : 'contact recommended'}`;
+    item.title = provider.message || '';
+    items.push(item);
+  }
+  if (!items.length) {
+    const waiting = document.createElement('span');
+    waiting.textContent = 'Configuration is checked when the discovery agent runs.';
+    items.push(waiting);
+  }
+  panel.replaceChildren(heading, ...items);
+}
+
 function formatFinderNumber(value) {
   const number = Number(value);
   return Number.isFinite(number) ? new Intl.NumberFormat().format(number) : '0';
@@ -113,6 +146,25 @@ function finderSafeUrl(value) {
   } catch {
     return '';
   }
+}
+
+function finderRecordDownloads(record) {
+  const candidates = Array.isArray(record?.downloads) ? [...record.downloads] : [];
+  if (record?.download_url) candidates.push({ format: 'PDF', label: 'PDF', url: record.download_url, can_preview: true, can_analyze: true });
+  const seen = new Set();
+  return candidates.map(download => {
+    const url = finderSafeUrl(download?.url);
+    const format = String(download?.format || '').toUpperCase();
+    if (!url || !['PDF', 'EPUB', 'TXT', 'HTML'].includes(format) || seen.has(url)) return null;
+    seen.add(url);
+    return {
+      format,
+      label: String(download?.label || format).replace(/\s+/g, ' ').trim().slice(0, 70),
+      url,
+      canPreview: download?.can_preview === true || ['PDF', 'TXT', 'HTML'].includes(format),
+      canAnalyze: download?.can_analyze === true || format === 'PDF',
+    };
+  }).filter(Boolean).slice(0, 6);
 }
 
 function createFinderLink(label, url, className = 'finder-action') {
@@ -498,7 +550,7 @@ function openFinderPreview(url, title) {
   const label = finderElement('finder-preview-title');
   const source = finderElement('finder-preview-source');
   if (!panel || !viewer) return;
-  if (label) label.textContent = title || 'Provider-authorized PDF preview';
+  if (label) label.textContent = title || 'Provider-authorized preview';
   if (source) {
     source.href = safeUrl;
     source.hidden = false;
@@ -518,8 +570,8 @@ function finderPdfFilename(title) {
   return `${name}.pdf`;
 }
 
-async function importFinderPdf(record, button) {
-  const safeUrl = finderSafeUrl(record.download_url);
+async function importFinderPdf(record, button, pdfUrl = record.download_url) {
+  const safeUrl = finderSafeUrl(pdfUrl);
   if (!safeUrl || typeof window.loadBookFile !== 'function') {
     finderToast('This PDF cannot be sent to Book Explorer right now', 'error');
     return;
@@ -601,8 +653,9 @@ function createFinderResult(record) {
   const match = document.createElement('span');
   match.className = `finder-match-label ${['Exact match', 'Exact ISBN'].includes(record.match_label) ? 'exact' : ''}`;
   match.textContent = record.match_label || 'Catalog match';
+  const downloads = finderRecordDownloads(record);
   const access = document.createElement('span');
-  access.className = `finder-access-label ${record.download_url ? 'download' : ''}`;
+  access.className = `finder-access-label ${downloads.length ? 'download' : ''}`;
   access.textContent = record.availability || 'Catalog record';
   labels.append(match, access);
   if (record.is_best_match) {
@@ -668,19 +721,25 @@ function createFinderResult(record) {
   save.dataset.shelfId = shelfId;
   save.setAttribute('aria-pressed', String(saved));
   const view = createFinderLink(record.availability === 'Preview available' ? 'Preview book ↗' : 'View / read ↗', record.view_url, 'finder-action finder-action-primary');
-  const download = createFinderLink('Download legal PDF ↗', record.download_url, 'finder-action finder-action-download');
-  const workspacePreview = record.download_url
-    ? createFinderButton('Preview in workspace', 'finder-action finder-action-preview', () => openFinderPreview(record.download_url, record.title))
+  const previewDownload = downloads.find(download => download.canPreview);
+  const analyzablePdf = downloads.find(download => download.format === 'PDF' && download.canAnalyze);
+  const workspacePreview = previewDownload
+    ? createFinderButton(`Preview ${previewDownload.format} in workspace`, 'finder-action finder-action-preview', () => openFinderPreview(previewDownload.url, record.title))
     : null;
-  const inspect = record.download_url
-    ? createFinderButton('Analyze in Book Explorer', 'finder-action finder-action-inspect', event => importFinderPdf(record, event.currentTarget))
+  const inspect = analyzablePdf
+    ? createFinderButton('Analyze PDF in Book Explorer', 'finder-action finder-action-inspect', event => importFinderPdf(record, event.currentTarget, analyzablePdf.url))
     : null;
   const details = createFinderLink('Catalog details ↗', record.detail_url, 'finder-action');
   actions.append(save);
   if (view) actions.append(view);
   if (workspacePreview) actions.append(workspacePreview);
   if (inspect) actions.append(inspect);
-  if (download) actions.append(download);
+  downloads.forEach((download, index) => {
+    const duplicateFormat = downloads.some((other, otherIndex) => otherIndex !== index && other.format === download.format);
+    const detail = duplicateFormat && download.label !== download.format ? ` · ${download.label.slice(0, 28)}` : '';
+    const link = createFinderLink(`Download ${download.format}${detail} ↗`, download.url, 'finder-action finder-action-download');
+    if (link) actions.append(link);
+  });
   if (details) actions.append(details);
 
   card.append(top, confidenceBlock, sources, actions);
@@ -692,12 +751,14 @@ function renderFinderResults(data) {
   if (!results) return;
   const items = Array.isArray(data.results) ? data.results : [];
   const providerSummary = (Array.isArray(data.providers) ? data.providers : []).map(provider => {
-    if (provider.status === 'available') return `${provider.name}: ${provider.matches} scored`;
+    if (provider.status === 'available') return `${provider.name}: ${provider.matches} candidates`;
+    if (provider.status === 'configuration_required') return `${provider.name}: setup required`;
     return `${provider.name}: unavailable${provider.detail ? ` (${provider.detail})` : ''}`;
   }).join(' · ');
   setFinderProviderStatus(providerSummary || 'Catalog search complete');
   setFinderCoverage(data.coverage);
   renderFinderTrace(data.agent);
+  renderFinderConfiguration(data.configuration);
   const coverage = data.coverage || {};
   const candidateCount = Number(coverage.candidates_evaluated) || 0;
   const queryLabel = data.query?.title || data.query?.isbn || '';

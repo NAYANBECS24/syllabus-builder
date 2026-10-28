@@ -670,10 +670,10 @@ python run.py</pre>
       <div class="finder-guidance">
         <strong>What you get</strong>
         <ul>
-          <li>Parallel checks across Open Library, Google Books, Internet Archive, and Crossref</li>
+          <li>Parallel checks across six catalog and open-access providers</li>
           <li>Transparent title, author, edition, and catalog-verification confidence</li>
           <li>Edition-aware alternatives when an exact access option is unavailable</li>
-          <li>In-workspace previews, local Book Explorer analysis, and downloads only for provider-authorized PDFs</li>
+          <li>Provider-authorized PDF/EPUB downloads, PDF analysis, and public reading links</li>
         </ul>
       </div>
     </aside>
@@ -698,11 +698,15 @@ python run.py</pre>
         <strong>Discovery crawler</strong>
         <span>Waiting for a title, author, or ISBN.</span>
       </div>
+      <div id="finder-provider-setup" class="finder-provider-setup" aria-live="polite">
+        <strong>Provider setup</strong>
+        <span>Configuration is checked when the discovery agent runs.</span>
+      </div>
       <div id="finder-results" class="finder-results" aria-live="polite">
         <div class="finder-empty-state">
           <div class="finder-empty-icon" aria-hidden="true">⌕</div>
           <strong>Search a book to compare trusted sources.</strong>
-          <span>Results combine four catalog APIs, remove weak matches, and merge evidence for the same edition. PDF actions appear only when a provider supplies a direct file.</span>
+          <span>Results combine six catalog and open-access APIs, remove weak matches, and merge evidence for the same edition. Download actions appear only when a provider supplies a public file.</span>
         </div>
       </div>
       <footer id="finder-legal-note" class="finder-legal-note">Availability depends on the provider, book edition, and your region. This finder does not link to unauthorized copies.</footer>
@@ -739,15 +743,15 @@ python run.py</pre>
     <div class="finder-preview-toolbar">
       <div>
         <div class="book-step-label">04 · Read in workspace</div>
-        <h2 id="finder-preview-title">Provider-authorized PDF preview</h2>
-        <p>The PDF is loaded directly from the provider in your browser. If that provider blocks embedding, use the source link to continue there.</p>
+        <h2 id="finder-preview-title">Provider-authorized preview</h2>
+        <p>The public file is loaded directly from its provider in your browser. If that provider blocks embedding, use the source link to continue there.</p>
       </div>
       <div class="finder-preview-actions">
         <a id="finder-preview-source" class="finder-action finder-action-primary" target="_blank" rel="noopener noreferrer" hidden>Open source ↗</a>
         <button id="finder-preview-close" class="btn btn-sm btn-ghost" type="button">Close preview</button>
       </div>
     </div>
-    <iframe id="finder-preview-viewer" title="Provider-authorized book PDF preview" loading="lazy" referrerpolicy="no-referrer"></iframe>
+    <iframe id="finder-preview-viewer" title="Provider-authorized book preview" loading="lazy" referrerpolicy="no-referrer"></iframe>
   </section>
 </div>
 </section>
