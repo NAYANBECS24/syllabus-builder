@@ -1790,7 +1790,18 @@ a.finder-source-link:hover { border-color: #abc6eb; background: #eef5ff; color: 
 .finder-action-primary { border-color: #b7cceb; background: #f5f9ff; color: #245896; }
 .finder-action-download { border-color: #a7d5b8; background: #f0faf4; color: #197044; }
 .finder-action-download:hover { border-color: #75ba91; background: #e9f8ef; color: #0d6336; }
+.finder-action-preview { border-color: #c9b8ef; background: #f6f2ff; color: #5b21b6; cursor: pointer; }
+.finder-action-preview:hover { border-color: #aa91df; background: #efe8ff; color: #4c1d95; }
+.finder-action-inspect { border-color: #9ac7d9; background: #effafd; color: #0f5b78; cursor: pointer; }
+.finder-action-inspect:hover { border-color: #69abc5; background: #e2f6fb; color: #0b4a63; }
 .finder-legal-note { padding: 11px 16px; border-top: 1px solid var(--border-subtle); background: #f8fafc; color: var(--text-muted); font-size: .66rem; line-height: 1.45; }
+.finder-preview-panel { margin-top: 18px; overflow: hidden; border: 1px solid var(--border-subtle); border-radius: var(--radius-lg); background: var(--bg-card); box-shadow: var(--shadow-sm); }
+.finder-preview-toolbar { display: flex; align-items: flex-start; justify-content: space-between; gap: 14px; padding: 18px 20px; border-bottom: 1px solid var(--border-subtle); }
+.finder-preview-toolbar .book-step-label { margin-bottom: 4px; }
+.finder-preview-toolbar h2 { margin: 0; color: var(--text-primary); font-size: .98rem; }
+.finder-preview-toolbar p { max-width: 660px; margin: 5px 0 0; color: var(--text-muted); font-size: .7rem; line-height: 1.5; }
+.finder-preview-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
+#finder-preview-viewer { display: block; width: 100%; height: min(75vh, 800px); min-height: 500px; border: 0; background: #eef2f7; }
 .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 1120px) {
@@ -1861,6 +1872,9 @@ a.finder-source-link:hover { border-color: #abc6eb; background: #eef5ff; color: 
   .finder-result-identity h3 { white-space: normal; }
   .finder-result-labels { max-width: none; justify-content: flex-start; }
   .finder-empty-state { min-height: 330px; }
+  .finder-preview-toolbar { padding: 15px; flex-direction: column; }
+  .finder-preview-actions { justify-content: flex-start; }
+  #finder-preview-viewer { height: 68vh; min-height: 390px; }
   .modal-overlay { padding: 10px; }
   .modal-header, .modal-body, .modal-footer { padding: 14px; }
 }

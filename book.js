@@ -275,7 +275,8 @@ function renderBookResults(data) {
       : 'No matching pages';
   }
   if (status) {
-    const indexed = `${data.searchable_pages || 0} of ${data.total_pages || 0} pages searchable`;
+    const pageCount = data.page_count ?? data.total_pages ?? 0;
+    const indexed = `${data.searchable_pages || 0} of ${pageCount} pages searchable`;
     status.textContent = data.cached ? `Index reused · ${indexed}` : indexed;
   }
   renderBookOutline(data.outline);
@@ -426,4 +427,7 @@ function initBookExplorer() {
 }
 
 window.openBookPage = openBookPage;
+// Allows the Book Finder to pass a provider-authorized PDF into the same
+// local inspection workflow used for a user-selected file.
+window.loadBookFile = handleBookFile;
 document.addEventListener('DOMContentLoaded', initBookExplorer);

@@ -1,6 +1,8 @@
 'use strict';
 
-const BOOK_FINDER_TIMEOUT_MS = 30000;
+const BOOK_FINDER_TIMEOUT_MS = 40000;
+const FINDER_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
+const FINDER_IMPORT_TIMEOUT_MS = 90000;
 
 const finderState = {
   abortController: null,
@@ -34,7 +36,7 @@ function setFinderBusy(isBusy) {
   const author = finderElement('finder-author');
   if (button) {
     button.disabled = isBusy;
-    button.textContent = isBusy ? 'Searching catalogs…' : 'Find books';
+    button.textContent = isBusy ? 'Searching catalogs…' : 'Run discovery agent';
   }
   if (title) title.disabled = isBusy;
   if (author) author.disabled = isBusy;
@@ -68,7 +70,8 @@ function setFinderCoverage(coverage) {
   const uniqueCount = Number(coverage?.unique_books_ranked) || 0;
   const reportedHits = Number(coverage?.catalog_hits_reported) || 0;
   value.textContent = `${formatFinderNumber(candidateCount)} candidates scored`;
-  detail.textContent = `${formatFinderNumber(uniqueCount)} unique books${reportedHits ? ` · ${formatFinderNumber(reportedHits)} provider records reported` : ''}`;
+  const providersChecked = Number(coverage?.providers_checked) || 0;
+  detail.textContent = `${formatFinderNumber(uniqueCount)} edition-aware matches${reportedHits ? ` · ${formatFinderNumber(reportedHits)} provider records reported` : ''}${providersChecked ? ` · ${providersChecked} sources checked` : ''}`;
   panel.hidden = false;
 }
 
@@ -93,6 +96,109 @@ function createFinderLink(label, url, className = 'finder-action') {
   return link;
 }
 
+function createFinderButton(label, className, onClick) {
+  const button = document.createElement('button');
+  button.type = 'button';
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener('click', onClick);
+  return button;
+}
+
+function closeFinderPreview() {
+  const panel = finderElement('finder-preview-panel');
+  const viewer = finderElement('finder-preview-viewer');
+  const source = finderElement('finder-preview-source');
+  if (viewer) viewer.removeAttribute('src');
+  if (source) {
+    source.hidden = true;
+    source.removeAttribute('href');
+  }
+  if (panel) panel.hidden = true;
+}
+
+function openFinderPreview(url, title) {
+  const safeUrl = finderSafeUrl(url);
+  if (!safeUrl) {
+    finderToast('This provider did not supply a secure PDF preview link', 'error');
+    return;
+  }
+  const panel = finderElement('finder-preview-panel');
+  const viewer = finderElement('finder-preview-viewer');
+  const label = finderElement('finder-preview-title');
+  const source = finderElement('finder-preview-source');
+  if (!panel || !viewer) return;
+  if (label) label.textContent = title || 'Provider-authorized PDF preview';
+  if (source) {
+    source.href = safeUrl;
+    source.hidden = false;
+  }
+  viewer.removeAttribute('src');
+  viewer.src = safeUrl;
+  panel.hidden = false;
+  panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+}
+
+function finderPdfFilename(title) {
+  const name = String(title || 'authorized-book')
+    .replace(/[<>:"/\\|?*\u0000-\u001F]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .slice(0, 100) || 'authorized-book';
+  return `${name}.pdf`;
+}
+
+async function importFinderPdf(record, button) {
+  const safeUrl = finderSafeUrl(record.download_url);
+  if (!safeUrl || typeof window.loadBookFile !== 'function') {
+    finderToast('This PDF cannot be sent to Book Explorer right now', 'error');
+    return;
+  }
+  const originalLabel = button.textContent;
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), FINDER_IMPORT_TIMEOUT_MS);
+  button.disabled = true;
+  button.textContent = 'Preparing PDF…';
+  try {
+    const response = await fetch(safeUrl, { signal: controller.signal, credentials: 'omit' });
+    if (!response.ok) throw new Error(`The provider returned ${response.status}`);
+    const advertisedSize = Number(response.headers.get('content-length'));
+    if (Number.isFinite(advertisedSize) && advertisedSize > FINDER_IMPORT_MAX_BYTES) {
+      throw new Error('The provider PDF is larger than the 50 MB local analysis limit');
+    }
+    if (!response.body) throw new Error('The provider did not return a readable PDF stream');
+    const reader = response.body.getReader();
+    const chunks = [];
+    let received = 0;
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      received += value.byteLength;
+      if (received > FINDER_IMPORT_MAX_BYTES) {
+        controller.abort();
+        throw new Error('The provider PDF is larger than the 50 MB local analysis limit');
+      }
+      chunks.push(value);
+    }
+    const pdf = new Blob(chunks, { type: 'application/pdf' });
+    const signature = new TextDecoder().decode(await pdf.slice(0, 1024).arrayBuffer());
+    if (!signature.includes('%PDF-')) throw new Error('The provider did not return a PDF file');
+    const file = new File([pdf], finderPdfFilename(record.title), { type: 'application/pdf' });
+    window.navigate?.('books');
+    window.loadBookFile(file);
+    finderToast('Authorized PDF loaded in Book Explorer', 'success');
+  } catch (error) {
+    const message = error?.name === 'AbortError'
+      ? 'PDF import timed out. Download it from the provider, then upload it in Book Explorer.'
+      : `${error.message || 'The provider blocked browser import.'} Download it from the provider, then upload it in Book Explorer.`;
+    finderToast(message, 'error');
+  } finally {
+    window.clearTimeout(timeout);
+    button.disabled = false;
+    button.textContent = originalLabel;
+  }
+}
+
 function createFinderResult(record) {
   const card = document.createElement('article');
   card.className = `finder-result-card${record.is_best_match ? ' best-match' : ''}`;
@@ -105,7 +211,8 @@ function createFinderResult(record) {
   title.textContent = record.title || 'Untitled book';
   const byline = document.createElement('p');
   const authorList = Array.isArray(record.authors) && record.authors.length ? record.authors.join(', ') : 'Author not listed';
-  const metadata = [record.year, record.publisher].filter(Boolean).join(' · ');
+  const identifiers = Array.isArray(record.identifiers) ? record.identifiers.filter(Boolean) : [];
+  const metadata = [record.year, record.publisher, record.edition_note, identifiers.length ? `ISBN ${identifiers[0]}` : ''].filter(Boolean).join(' · ');
   byline.textContent = metadata ? `${authorList} · ${metadata}` : authorList;
   identity.append(title, byline);
   const labels = document.createElement('div');
@@ -176,8 +283,16 @@ function createFinderResult(record) {
   actions.className = 'finder-actions';
   const view = createFinderLink(record.availability === 'Preview available' ? 'Preview book ↗' : 'View / read ↗', record.view_url, 'finder-action finder-action-primary');
   const download = createFinderLink('Download legal PDF ↗', record.download_url, 'finder-action finder-action-download');
+  const workspacePreview = record.download_url
+    ? createFinderButton('Preview in workspace', 'finder-action finder-action-preview', () => openFinderPreview(record.download_url, record.title))
+    : null;
+  const inspect = record.download_url
+    ? createFinderButton('Analyze in Book Explorer', 'finder-action finder-action-inspect', event => importFinderPdf(record, event.currentTarget))
+    : null;
   const details = createFinderLink('Catalog details ↗', record.detail_url, 'finder-action');
   if (view) actions.append(view);
+  if (workspacePreview) actions.append(workspacePreview);
+  if (inspect) actions.append(inspect);
   if (download) actions.append(download);
   if (details) actions.append(details);
 
@@ -191,7 +306,7 @@ function renderFinderResults(data) {
   const items = Array.isArray(data.results) ? data.results : [];
   const providerSummary = (Array.isArray(data.providers) ? data.providers : []).map(provider => {
     if (provider.status === 'available') return `${provider.name}: ${provider.matches} scored`;
-    return `${provider.name}: unavailable`;
+    return `${provider.name}: unavailable${provider.detail ? ` (${provider.detail})` : ''}`;
   }).join(' · ');
   setFinderProviderStatus(providerSummary || 'Catalog search complete');
   setFinderCoverage(data.coverage);
@@ -279,7 +394,7 @@ function useFinderReference() {
   if (title) title.value = reference.title;
   if (author) author.value = reference.author;
   title?.focus();
-  setFinderSummary(`Reference imported: “${reference.title}”. Choose Find books to search public catalogs.`);
+  setFinderSummary(`Reference imported: “${reference.title}”. Run the discovery agent to search trusted public catalogs.`);
 }
 
 function openBookFinder(book) {
@@ -316,6 +431,7 @@ async function searchFinder(event) {
   finderState.abortController = controller;
   const timeout = window.setTimeout(() => controller.abort(), BOOK_FINDER_TIMEOUT_MS);
   setFinderBusy(true);
+  closeFinderPreview();
   setFinderProviderStatus('Searching trusted public catalogs…');
   setFinderSummary('Finding the closest title and author match, then checking alternatives and provider-authorized access.');
   try {
@@ -356,7 +472,9 @@ function initBookFinder() {
     const selected = finderElement('finder-reference-select')?.value;
     finderElement('finder-use-reference').disabled = !selected;
   });
+  finderElement('finder-preview-close')?.addEventListener('click', closeFinderPreview);
 }
 
 window.openBookFinder = openBookFinder;
+window.openFinderPreview = openFinderPreview;
 document.addEventListener('DOMContentLoaded', initBookFinder);

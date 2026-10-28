@@ -622,7 +622,7 @@ python run.py</pre>
     <div>
       <div class="eyebrow-label">Book Finder</div>
       <h1 class="section-title">Find the right edition and lawful access</h1>
-      <p class="section-sub">Search public book catalogs by title and author. Compare the closest edition with alternatives, then open, preview, borrow, or download a PDF only when the provider explicitly makes one available.</p>
+      <p class="section-sub">Search trusted public book catalogs by title and author. The discovery agent compares edition metadata, source agreement, and provider-authorized access before offering in-workspace previews or downloads.</p>
     </div>
     <div class="finder-trust-note" role="note">Public catalogs · provider-authorized links only</div>
   </header>
@@ -635,7 +635,7 @@ python run.py</pre>
         <input id="finder-title" type="search" maxlength="180" placeholder="e.g. Introduction to Algorithms" autocomplete="off" required/>
         <label for="finder-author">Author <span class="finder-optional">Optional, improves matching</span></label>
         <input id="finder-author" type="search" maxlength="160" placeholder="e.g. Thomas H. Cormen" autocomplete="off"/>
-        <button id="finder-search-button" class="btn btn-primary finder-search-button" type="submit">Find books</button>
+        <button id="finder-search-button" class="btn btn-primary finder-search-button" type="submit">Run discovery agent</button>
       </form>
 
       <div class="finder-import-card">
@@ -655,10 +655,10 @@ python run.py</pre>
       <div class="finder-guidance">
         <strong>What you get</strong>
         <ul>
-          <li>Up to 140 lawful catalog candidates scored per search</li>
-          <li>Transparent title, author, and catalog-verification confidence</li>
-          <li>Other editions and related results when exact access is unavailable</li>
-          <li>View, preview, borrow, and provider-authorized PDF links</li>
+          <li>Parallel checks across Open Library, Google Books, and Internet Archive</li>
+          <li>Transparent title, author, edition, and catalog-verification confidence</li>
+          <li>Edition-aware alternatives when an exact access option is unavailable</li>
+          <li>In-workspace previews, local Book Explorer analysis, and downloads only for provider-authorized PDFs</li>
         </ul>
       </div>
     </aside>
@@ -689,6 +689,21 @@ python run.py</pre>
       <footer id="finder-legal-note" class="finder-legal-note">Availability depends on the provider, book edition, and your region. This finder does not link to unauthorized copies.</footer>
     </section>
   </div>
+
+  <section id="finder-preview-panel" class="finder-preview-panel" hidden aria-labelledby="finder-preview-title">
+    <div class="finder-preview-toolbar">
+      <div>
+        <div class="book-step-label">03 · Read in workspace</div>
+        <h2 id="finder-preview-title">Provider-authorized PDF preview</h2>
+        <p>The PDF is loaded directly from the provider in your browser. If that provider blocks embedding, use the source link to continue there.</p>
+      </div>
+      <div class="finder-preview-actions">
+        <a id="finder-preview-source" class="finder-action finder-action-primary" target="_blank" rel="noopener noreferrer" hidden>Open source ↗</a>
+        <button id="finder-preview-close" class="btn btn-sm btn-ghost" type="button">Close preview</button>
+      </div>
+    </div>
+    <iframe id="finder-preview-viewer" title="Provider-authorized book PDF preview" loading="lazy" referrerpolicy="no-referrer"></iframe>
+  </section>
 </div>
 </section>
 
