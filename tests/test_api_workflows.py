@@ -88,6 +88,8 @@ class APIWorkflowTests(unittest.TestCase):
         self.assertEqual(status, 200, course)
         self.assertEqual(course['course']['code'], 'CS23301')
         self.assertTrue(course['units'])
+        self.assertIn('_audit', course)
+        self.assertIn(course['_audit']['status'], {'verified', 'review_required'})
         self.assertEqual(course['_processing']['used_mode'], 'offline')
         status, audit = self.request('/api/curriculum-audit', {'task2': course})
         self.assertEqual(status, 200, audit)
@@ -156,6 +158,7 @@ class APIWorkflowTests(unittest.TestCase):
         self.assertEqual(result['_processing']['used_mode'], 'online')
         self.assertEqual(result['_processing']['requested_mode'], 'online')
         self.assertEqual(result['_online']['reviewed_pages'], [1])
+        self.assertIn('_audit', result)
 
     def test_invalid_hint_shapes_are_client_errors(self):
         for hints in [{'courses': 'invalid'}, {'courses': [3]}, {'target': []}, {'courses': [{'page': -1}]}, {'online_review': []}, {'online_review': {'start_page': 8, 'end_page': 2}}]:

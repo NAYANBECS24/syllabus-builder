@@ -485,12 +485,17 @@ function renderAll() {
   }
   renderStatsBar();
   const source = STATE.task2Result?._source || STATE.task1Result?._source;
+  const extractionAudit = STATE.task2Result?._audit || STATE.task1Result?._audit;
   const quality = $('source-quality');
   if (quality) {
     quality.hidden = !source;
     if (source) {
       const processing = STATE.task2Result?._processing || STATE.task1Result?._processing;
-      quality.textContent = `${processing?.cached ? 'Saved extraction · ' : ''}${source.page_count} source page(s), ${source.ocr_pages?.length || 0} read with OCR. ${source.review_pages?.length ? `Review pages ${source.review_pages.join(', ')} against the original. ` : ''}${(source.warnings || []).join(' ')} ${STATE.task2Result?._quality?.note || 'Check the extracted catalog against the original document.'}`;
+      const auditSummary = extractionAudit?.summary || {};
+      const auditText = extractionAudit
+        ? `Evidence audit: ${extractionAudit.status === 'verified' ? 'source-verified' : `${auditSummary.review_required_values || 0} value(s) need review`}. `
+        : '';
+      quality.textContent = `${processing?.cached ? 'Saved extraction · ' : ''}${source.page_count} source page(s), ${source.ocr_pages?.length || 0} read with OCR. ${source.review_pages?.length ? `Review pages ${source.review_pages.join(', ')} against the original. ` : ''}${auditText}${(source.warnings || []).join(' ')} ${STATE.task2Result?._quality?.note || 'Check the extracted catalog against the original document.'}`;
     }
   }
   const review = STATE.task2Result?._online || STATE.task1Result?._online;

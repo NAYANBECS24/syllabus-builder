@@ -73,6 +73,36 @@ class OfflineExtractionTests(unittest.TestCase):
                 self.assertTrue(any(sylex.codes_match(c['code'], code) for c in catalog['courses']), catalog)
                 self.assertTrue(sylex.run_task2(path, code)['course'])
 
+    def test_short_codes_bracketed_codes_and_labelled_identity_are_extracted(self):
+        cases = [
+            ('CS50 INTRODUCTION TO COMPUTING', 'CS50', 'INTRODUCTION TO COMPUTING'),
+            ('INTRODUCTION TO COMPUTING (CS50)', 'CS50', 'INTRODUCTION TO COMPUTING'),
+            ('Subject Code: CS50\nSubject Name: INTRODUCTION TO COMPUTING\nL T P C\n3 0 0 3', 'CS50', 'INTRODUCTION TO COMPUTING'),
+        ]
+        for index, (identity, code, title) in enumerate(cases):
+            with self.subTest(identity=identity):
+                path = self.pdf([identity + '\nUNIT 1 FOUNDATIONS\nComputational thinking and algorithms.'], f'identity-{index}.pdf')
+                catalog = sylex.run_task1(path)
+                self.assertTrue(any(sylex.codes_match(c['code'], code) and c['title'] == title for c in catalog['courses']), catalog)
+                result = sylex.run_task2(path, code)
+                self.assertEqual(result['course']['code'], code)
+                self.assertEqual(result['course']['title'], title)
+
+    def test_hours_before_unit_title_are_not_mislabelled(self):
+        path = self.pdf(['CS50 COMPUTING\nMODULE 1\n(6 hours): FOUNDATIONS\nComputational thinking and algorithms.\nMODULE 2\n(4 hours): DATA\nData representation and storage.'])
+        result = sylex.run_task2(path, 'CS50')
+        self.assertEqual([(unit['title'], unit['hours']) for unit in result['units']], [('FOUNDATIONS', 6), ('DATA', 4)])
+
+    def test_source_audit_marks_tampered_values_for_review(self):
+        path = self.pdf([course()])
+        result = sylex.run_task2(path, 'CS101')
+        self.assertEqual(result['_audit']['status'], 'verified', result['_audit'])
+        changed = json.loads(json.dumps(result))
+        changed['units'][0]['text'] = 'Invented material that is not present in the document.'
+        audit = sylex.audit_extraction_output(changed, 'CS101 DATA STRUCTURES\nUNIT I FUNDAMENTALS\nBinary trees and graph traversal.')
+        self.assertEqual(audit['status'], 'review_required')
+        self.assertTrue(any(issue['field'] == 'units[1].text' for issue in audit['issues']))
+
     def test_docx_tables_and_unicode_text_are_local(self):
         path = self.root / 'source.docx'
         paragraphs = course().splitlines()

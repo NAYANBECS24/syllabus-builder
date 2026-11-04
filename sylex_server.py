@@ -964,7 +964,7 @@ class Handler(BaseHTTPRequestHandler):
                 if result and isinstance(result, dict) and "error" not in result:
                     debug_info = result.get("_debug")
                     reasoning_info = result.get("_reasoning_summary")
-                    diagnostics = {key: result[key] for key in ("_source", "_quality", "_online", "_evidence") if key in result}
+                    diagnostics = {key: result[key] for key in ("_source", "_quality", "_audit", "_online", "_evidence") if key in result}
                     processing = result.get('_processing')
                     if course:
                         result = self._normalize_task2_schema(result, course)
