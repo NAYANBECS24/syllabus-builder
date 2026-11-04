@@ -133,6 +133,7 @@ function handleBookFile(file) {
   bookElement('book-query').disabled = false;
   bookElement('book-search-button').disabled = false;
   resetBookSearch();
+  setBookSearchBusy(false);
   showBookViewerEmpty();
   bookToast(`${file.name} is ready to search`, 'success');
   bookElement('book-query').focus();
@@ -148,6 +149,7 @@ function clearBookFile() {
   bookState.activePage = null;
   delete window.STATE.bookFile;
   delete window.STATE.bookObjectUrl;
+  setBookSearchBusy(false);
 
   const input = bookElement('book-file-input');
   if (input) input.value = '';
@@ -403,17 +405,12 @@ async function searchBook(event) {
   setBookSearchStatus('Searching pages…');
 
   try {
-    const baseUrl = String(window.STATE.serverUrl || window.location.origin).replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/api/book-search`, {
-      method: 'POST',
-      body: formData,
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Search failed (${response.status})`);
+    const data = await window.SylexAPI.request('book-search', { body: formData, signal: controller.signal, timeout: BOOK_SEARCH_TIMEOUT_MS });
+    if (bookState.searchAbortController !== controller) return;
     renderBookResults(data);
     bookToast(data.total_matches ? `Found ${data.total_matches} matching page${data.total_matches === 1 ? '' : 's'}` : 'No matching pages found', data.total_matches ? 'success' : 'info');
   } catch (error) {
+    if (bookState.searchAbortController !== controller) return;
     if (error.name === 'AbortError') {
       setBookSearchStatus('Search timed out');
       bookToast('Book search timed out. Try a smaller PDF or start the service again.', 'error');
@@ -424,8 +421,10 @@ async function searchBook(event) {
     }
   } finally {
     window.clearTimeout(timeoutId);
-    if (bookState.searchAbortController === controller) bookState.searchAbortController = null;
-    setBookSearchBusy(false);
+    if (bookState.searchAbortController === controller) {
+      bookState.searchAbortController = null;
+      setBookSearchBusy(false);
+    }
   }
 }
 

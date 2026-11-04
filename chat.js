@@ -276,8 +276,8 @@ function escHtml(s) {
 // ── Auto-analysis: produce suggestion cards from results ────────────
 function analyzAndSuggest(ctx) {
   const cards = [];
-  const d1 = ctx.task1;
-  const d2 = ctx.task2;
+  const d1 = ctx?.task1;
+  const d2 = ctx?.task2;
 
   if (d1) {
     if (d1.course_count === 0) {
@@ -352,8 +352,8 @@ function renderSuggestions(ctx) {
 }
 
 function updateContextPanel(ctx) {
-  const d1 = ctx.task1;
-  const d2 = ctx.task2;
+  const d1 = ctx?.task1;
+  const d2 = ctx?.task2;
   const summary = document.getElementById('context-summary');
   const status  = document.getElementById('context-status');
   const hasContext = Boolean(d1 || d2);
@@ -400,6 +400,14 @@ function updateContextPanel(ctx) {
     }
   }
 
+  if (!d2?.course) {
+    const chipsRow = document.getElementById('chat-chips');
+    chipsRow?.replaceChildren(...['Summarize the curriculum', 'Explain Bloom levels', 'How do I upload a syllabus?'].map(prompt => {
+      const button = document.createElement('button');
+      button.className = 'chat-chip'; button.textContent = prompt;
+      button.addEventListener('click', () => sendQuick(prompt)); return button;
+    }));
+  }
   renderSuggestions(ctx);
 }
 
@@ -493,7 +501,7 @@ function updateChatModeUI(mode) {
   const provider = 'NVIDIA';
   const model = typeof window.getSylexCloudModel === 'function'
     ? window.getSylexCloudModel()
-    : (localStorage.getItem('sylex_cloud_model') || (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'z-ai/glm-5.3'));
+    : (localStorage.getItem('sylex_cloud_model') || (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'z-ai/glm-5.3-flash'));
 
   if (btnOn) btnOn.classList.toggle('active', isOnline);
   if (btnOff) btnOff.classList.toggle('active', !isOnline);
@@ -563,18 +571,26 @@ function formatSyllabusContext(c) {
 async function sendChat() {
   const input = document.getElementById('chat-input');
   const msg   = (input?.value || '').trim();
-  if (!msg) return;
+  if (!msg || CHAT.busy) return;
+  CHAT.busy = true;
+  const requestId = (CHAT.requestId || 0) + 1;
+  CHAT.requestId = requestId;
+  const history = CHAT.history.slice(-6);
+  const controller = new AbortController();
+  CHAT.controller = controller;
+  const timeout = setTimeout(() => controller.abort(), 30000);
+  const sendButton = document.getElementById('chat-send');
+  if (sendButton) { sendButton.disabled = true; sendButton.textContent = 'Thinking…'; }
+  try {
   input.value = '';
   appendMsg(msg, 'user', false);
   showTyping();
 
-  const defaultTask1 = (typeof DEMO_TASK1 !== 'undefined' ? DEMO_TASK1 : null);
-  const defaultTask2 = (typeof DEMO_TASK2 !== 'undefined' ? DEMO_TASK2 : null);
-
   const ctx = {
-    task1: CHAT.context?.task1 || window.STATE?.task1Result || defaultTask1,
-    task2: CHAT.context?.task2 || window.STATE?.task2Result || defaultTask2
+    task1: window.STATE?.task1Result || null,
+    task2: window.STATE?.task2Result || null
   };
+  CHAT.context = ctx.task1 || ctx.task2 ? ctx : null;
 
   const savedMode = localStorage.getItem('sylex_mode') || window.STATE?.extractionMode || 'online';
   const isOnline = (savedMode === 'online');
@@ -591,7 +607,7 @@ async function sendChat() {
   const onlineProvider = 'nvidia';
   const onlineModel = typeof window.getSylexCloudModel === 'function'
     ? window.getSylexCloudModel()
-    : (localStorage.getItem('sylex_cloud_model') || (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'z-ai/glm-5.3'));
+    : (localStorage.getItem('sylex_cloud_model') || (typeof SYLEX_NVIDIA_MODEL !== 'undefined' ? SYLEX_NVIDIA_MODEL : 'z-ai/glm-5.3-flash'));
   const onlineKey = '';
   const onlineEndpoint = '';
 
@@ -600,7 +616,7 @@ async function sendChat() {
     try {
       const payload = {
         message: msg,
-        history: CHAT.history.slice(-6),
+        history,
         context: ctx,
         provider: onlineProvider,
         model: onlineModel,
@@ -608,28 +624,18 @@ async function sendChat() {
         endpoint: onlineEndpoint
       };
 
-      const resp = await fetch(serverUrl + '/api/chat', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
-        signal: AbortSignal.timeout(30000)
+      const data = await window.SylexAPI.request('chat', { json: payload, base: serverUrl, signal: controller.signal, timeout: 30000 });
+      if (CHAT.requestId !== requestId) return;
+      if (!data.reply) throw new Error('The cloud assistant returned an empty reply.');
+      removeTyping();
+      appendMsg(renderMarkdown(data.reply), 'assistant', true, {
+        model: data.model || onlineModel,
+        provider: data.provider || onlineProvider
       });
-
-      if (resp.ok) {
-        const data = await resp.json();
-        removeTyping();
-        if (data.reply) {
-          appendMsg(renderMarkdown(data.reply), 'assistant', true, {
-            model: data.model || onlineModel,
-            provider: data.provider || onlineProvider
-          });
-          return;
-        }
-      } else {
-        console.warn(`[Chat Proxy] Server returned HTTP ${resp.status}`);
-      }
+      return;
     } catch (serverErr) {
-      console.warn('[Server Chat Proxy Note]', serverErr);
+      if (CHAT.requestId !== requestId) return;
+      window.toast?.('Cloud response unavailable. Using local rules for this reply.', 'info');
     }
   }
 
@@ -652,9 +658,19 @@ async function sendChat() {
       provider: 'local'
     });
   }
+  } finally {
+    clearTimeout(timeout);
+    if (CHAT.requestId === requestId) {
+      CHAT.busy = false;
+      CHAT.controller = null;
+      removeTyping();
+      if (sendButton) { sendButton.disabled = false; sendButton.textContent = 'Send'; }
+    }
+  }
 }
 
 function sendQuick(msg) {
+  if (CHAT.busy) return;
   const input = document.getElementById('chat-input');
   if (input) input.value = msg;
   sendChat();
@@ -670,7 +686,7 @@ function respond(q) {
     }
   }
 
-  const d2 = CHAT.context?.task2 || window.STATE?.task2Result || (typeof DEMO_TASK2 !== 'undefined' ? DEMO_TASK2 : null);
+  const d2 = CHAT.context?.task2 || window.STATE?.task2Result || null;
   const course = d2?.course;
 
   if (course) {
@@ -845,7 +861,7 @@ function appendMsg(content, role, isHtml = false, meta = null) {
   div.appendChild(bubble);
   messages.appendChild(div);
   messages.scrollTop = messages.scrollHeight;
-  CHAT.history.push({ role, content });
+  CHAT.history.push({ role, content: contentWrap.textContent || '' });
 }
 
 let typingEl = null;
@@ -869,6 +885,13 @@ function removeTyping() {
 }
 
 function clearChat() {
+  CHAT.requestId = (CHAT.requestId || 0) + 1;
+  CHAT.controller?.abort();
+  CHAT.controller = null;
+  CHAT.busy = false;
+  removeTyping();
+  const sendButton = document.getElementById('chat-send');
+  if (sendButton) { sendButton.disabled = false; sendButton.textContent = 'Send'; }
   const messages = document.getElementById('chat-messages');
   if (messages) messages.innerHTML = '';
   CHAT.history = [];

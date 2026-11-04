@@ -4,6 +4,14 @@
 > **Architecture:** Pure Python Deterministic Extraction Engine (zero external AI calls for extraction)  
 > **Standard:** Fully document-agnostic. No college-specific rules. Word-for-word extraction. Zero invented text.
 
+## Interactive workspace
+
+Run `py -3.12 run.py` on Windows (or `python run.py`) and open http://localhost:7823. The workspace includes animated page navigation, a saved 3D reading shelf, Ctrl+K page search, extraction cancellation, and connection diagnostics under Settings.
+
+The Studio adds a persistent project library with source PDFs and research notes, edition comparisons, and study plans with completion tracking. Save an extraction from Results, resume it later, or export/import its project JSON. PDFs stay separate from portable JSON exports.
+
+Local mode uses deterministic extraction. Cloud-assisted mode can call a configured model and reports local fallback when used. No cloud credential is required for local PDF extraction. See [ARCHITECTURE.md](ARCHITECTURE.md) for module boundaries, request handling, and current limitations.
+
 ---
 
 ## 1. Clean Machine Installation

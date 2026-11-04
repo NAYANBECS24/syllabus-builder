@@ -14,6 +14,7 @@ import urllib.error
 import urllib.parse
 import ipaddress
 import socket
+import importlib.util
 import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from collections import OrderedDict
@@ -57,7 +58,10 @@ MIN_CATALOG_TITLE_CONFIDENCE = 40
 MIN_CATALOG_AUTHOR_CONFIDENCE = 65
 CATALOG_USER_AGENT = "SYLEX-BookFinder/4.0 (+https://github.com/NAYANBECS24/syllabus-builder)"
 STATIC_FILES = {
-    "index.html", "styles.css", "app.js", "book.js", "book-finder.js", "demo-data.js", "chat.js", "chat.css"
+    "index.html", "styles.css", "cinematic.css", "app.js", "book.js",
+    "book-finder.js", "demo-data.js", "chat.js", "chat.css", "cinematic.js",
+    "workspace.js", "workspace.css", "api-client.js",
+    "studio.js", "studio.css", "studio-core.js", "studio-store.js",
 }
 
 
@@ -454,6 +458,17 @@ class Handler(BaseHTTPRequestHandler):
                 "python":  platform.python_version(),
                 "version": "3.0",
                 "offline": True,
+                "platform": "vercel-serverless" if os.environ.get("VERCEL") else "local",
+                "capabilities": {
+                    "pdf": {
+                        "pymupdf": bool(importlib.util.find_spec("pymupdf") or importlib.util.find_spec("fitz")),
+                        "pdfplumber": bool(importlib.util.find_spec("pdfplumber")),
+                    },
+                    "cloud_configured": bool(DEFAULT_NVIDIA_API_KEY),
+                    "google_books_configured": bool(DEFAULT_GOOGLE_BOOKS_API_KEY),
+                    "catalog_providers": 6,
+                    "note": "Configuration only; use connection checks to verify upstream availability.",
+                },
             })
             return
 
@@ -472,15 +487,8 @@ class Handler(BaseHTTPRequestHandler):
 
         # API: live curriculum audit
         if path == "api/curriculum-audit":
-            try:
-                import sylex
-                d2 = DEFAULT_TASK2
-                audit = sylex.calculate_curriculum_audit(d2)
-                self.send_json(audit)
-                return
-            except Exception as e:
-                self.send_json({"error": str(e)}, 500)
-                return
+            self.send_json({"error": "Use POST with an extracted course in task2"}, 405)
+            return
 
         # Static files are explicitly allowlisted so secrets such as .env are never served.
         static_name = path or "index.html"
@@ -526,6 +534,9 @@ class Handler(BaseHTTPRequestHandler):
                     raise RequestError("Message exceeds the 12,000 character limit", 413)
                 if not isinstance(history, list):
                     raise RequestError("history must be an array")
+                if any(not isinstance(turn, dict) or turn.get("role") not in {"user", "assistant"}
+                       or not isinstance(turn.get("content"), str) for turn in history):
+                    raise RequestError("history entries must contain a user/assistant role and text content")
                 if not isinstance(context, dict):
                     raise RequestError("context must be an object")
                 if not all(isinstance(value, str) for value in (provider, model, api_key, endpoint)):
@@ -571,9 +582,8 @@ class Handler(BaseHTTPRequestHandler):
                 d2 = req_data.get("task2") or req_data.get("d2")
                 if d2 is None and req_data.get("course"):
                     d2 = req_data
-                d2 = d2 or DEFAULT_TASK2
-                if not isinstance(d2, dict):
-                    raise RequestError("task2 must be an object")
+                if not isinstance(d2, dict) or not isinstance(d2.get("course"), dict):
+                    raise RequestError("Provide an extracted course in task2 before running an audit")
                 import sylex
                 audit = sylex.calculate_curriculum_audit(d2)
                 self.send_json(audit)
@@ -592,9 +602,8 @@ class Handler(BaseHTTPRequestHandler):
                 d2 = req_data.get("task2") or req_data.get("d2")
                 if d2 is None and req_data.get("course"):
                     d2 = req_data
-                d2 = d2 or DEFAULT_TASK2
-                if not isinstance(d2, dict):
-                    raise RequestError("task2 must be an object")
+                if not isinstance(d2, dict) or not isinstance(d2.get("course"), dict):
+                    raise RequestError("Provide an extracted course in task2 before exporting a dossier")
                 html = self._generate_dossier_html(d2)
                 c_code = str((d2.get("course") or {}).get("code") or "SYLLABUS")
                 safe_code = re.sub(r'[^A-Za-z0-9_.-]+', '_', c_code).strip('._') or "SYLLABUS"
@@ -644,12 +653,12 @@ class Handler(BaseHTTPRequestHandler):
                         return
                     content, reasoning, m_used = self._call_nvidia_nemotron(
                         system_prompt="You are a helpful AI assistant. Answer concisely in one sentence.",
-                        user_content="Write a 1-sentence verification that GPU computing is active.",
-                        model=model or "z-ai/glm-5.3",
+                        user_content="Reply with: Connection verified.",
+                        model=model or "nvidia/nemotron-3.5-bolt-e4b",
                         api_key=key,
                         endpoint=endpoint,
                         max_tokens=256,
-                        timeout=20.0
+                        timeout=25.0
                     )
                     elapsed = int((time.time() - t0) * 1000)
                     self.send_json({
@@ -929,6 +938,15 @@ class Handler(BaseHTTPRequestHandler):
                         result = self._normalize_task1_schema(result, pdf_filename or "document.pdf")
                     if debug_info: result["_debug"] = debug_info
                     if reasoning_info: result["_reasoning_summary"] = reasoning_info
+                    fallback = bool((debug_info or {}).get("fallback_mode") == "offline")
+                    result["_processing"] = {
+                        "requested_mode": mode,
+                        "used_mode": "offline" if mode == "offline" or not course or fallback else "online",
+                        "fallback": fallback,
+                        "reason": "Catalog discovery uses the local rules engine" if mode == "online" and not course else (
+                            "Cloud unavailable; processed with the local engine" if fallback else ""
+                        ),
+                    }
 
                 # Cache successful extraction. Request data is never stored as shared user context.
                 if result and not (isinstance(result, dict) and "error" in result):
@@ -1194,12 +1212,12 @@ class Handler(BaseHTTPRequestHandler):
             )
         requested_model = (model or "").strip()
         if not requested_model or requested_model in ("gemini-2.0-flash", "gpt-4o-mini", "llama3.2"):
-            requested_model = "z-ai/glm-5.3"
+            requested_model = "nvidia/nemotron-3.5-bolt-e4b"
 
         candidate_models = [
             requested_model,
-            "z-ai/glm-5.3",
-            "meta/llama-3.2-11b-vision-instruct",
+            "z-ai/glm-5.3-flash",
+            "nvidia/nemotron-3.5-bolt-e4b",
             "openai/gpt-oss-20b",
         ]
         seen = set()
@@ -1218,7 +1236,7 @@ class Handler(BaseHTTPRequestHandler):
 
         last_err = None
         deadline = time.monotonic() + timeout
-        for m in models:
+        for model_index, m in enumerate(models):
             remaining = deadline - time.monotonic()
             if remaining <= 0:
                 break
@@ -1231,13 +1249,16 @@ class Handler(BaseHTTPRequestHandler):
             }
             try:
                 req = urllib.request.Request(url, data=json.dumps(payload).encode("utf-8"), headers=headers, method="POST")
-                with urllib.request.urlopen(req, timeout=max(0.5, remaining)) as resp:
+                # Reserve time for alternatives when the requested model stalls.
+                attempt_timeout = max(0.5, remaining * 0.6 if model_index == 0 and len(models) > 1 else remaining / (len(models) - model_index))
+                with urllib.request.urlopen(req, timeout=attempt_timeout) as resp:
                     res = json.loads(resp.read().decode("utf-8"))
                     msg = res["choices"][0]["message"]
                     content_str = msg.get("content") or ""
                     reasoning_str = msg.get("reasoning_content") or msg.get("reasoning") or ""
                     if content_str.strip():
                         return content_str, reasoning_str, m
+                    last_err = RuntimeError("Model returned no answer text")
             except Exception as call_err:
                 print(f"[NVIDIA Model Note] {m} failed ({call_err})")
                 last_err = call_err
@@ -1258,7 +1279,7 @@ class Handler(BaseHTTPRequestHandler):
         debug_flag  = False
         mode        = "offline"
         provider    = "nvidia"
-        model       = "z-ai/glm-5.3"
+        model       = "nvidia/nemotron-3.5-bolt-e4b"
         api_key     = ""
         endpoint    = ""
 
@@ -2922,7 +2943,8 @@ class Handler(BaseHTTPRequestHandler):
                     endpoint=endpoint,
                     temperature=0.7,
                     top_p=0.95,
-                    max_tokens=4096
+                    max_tokens=4096,
+                    timeout=45.0
                 )
                 start_brace = content_str.find('{')
                 end_brace = content_str.rfind('}')
@@ -3104,8 +3126,8 @@ class Handler(BaseHTTPRequestHandler):
         req_d1 = (context or {}).get("task1")
         req_d2 = (context or {}).get("task2")
 
-        d1 = req_d1 if (isinstance(req_d1, dict) and req_d1.get("courses")) else DEFAULT_TASK1
-        d2 = req_d2 if (isinstance(req_d2, dict) and req_d2.get("course")) else DEFAULT_TASK2
+        d1 = req_d1 if isinstance(req_d1, dict) else {}
+        d2 = req_d2 if isinstance(req_d2, dict) else {}
 
         # Format syllabus context summary
         ctx_parts = []
@@ -3119,7 +3141,7 @@ class Handler(BaseHTTPRequestHandler):
             c = d2["course"]
             ctx_parts.append(
                 f"Active Course: {c.get('code')} - {c.get('title')}\n"
-                f"Category: {c.get('category') or 'Professional Core'}, Credits: {c.get('credits') or 4}, L-T-P: {c.get('lecture') or 3}-{c.get('tutorial') or 0}-{c.get('practical') or 0}, Pages: {c.get('pages') or [1]}"
+                f"Category: {c.get('category', 'Not extracted')}, Credits: {c.get('credits', 'Not extracted')}, L-T-P: {c.get('lecture', '?')}-{c.get('tutorial', '?')}-{c.get('practical', '?')}, Pages: {c.get('pages', [])}"
             )
             units = d2.get("units") or []
             if units:
@@ -3148,7 +3170,7 @@ class Handler(BaseHTTPRequestHandler):
             if not_ext:
                 ctx_parts.append("Not Extracted / Missing Section Ledger:\n" + "\n".join([f"- {item}" for item in not_ext]))
 
-        context_str = "\n\n".join(ctx_parts)
+        context_str = "\n\n".join(ctx_parts) or "No syllabus is loaded. Give general guidance and do not invent course-specific facts."
 
         base_prompt = _read_system_prompt()
         if not base_prompt:
@@ -3164,13 +3186,13 @@ class Handler(BaseHTTPRequestHandler):
             "===========================================\n\n"
             "CRITICAL INSTRUCTIONS FOR YOUR RESPONSE:\n"
             "1. DIRECT AND COMPLETE ANSWER: Whatever question the user asks (concepts, definitions, comparisons, code examples, algorithm mechanics, exam questions, lesson plans, Bloom taxonomy analysis, or practical applications), YOU MUST DIRECTLY, THOROUGHLY, AND AUTHORITATIVELY ANSWER IT.\n"
-            "2. SYLLABUS GROUNDING: Connect and anchor your answer explicitly to the syllabus above. Mention the Course Code & Title, relevant Unit number, topic clause, and cognitive Bloom level (K1 to K6).\n"
+            "2. SYLLABUS GROUNDING: Use only course facts supplied above. When no syllabus is loaded, provide general guidance, clearly say that it is general, and ask for a document when course-specific analysis is needed. Never invent a course code, unit, outcome, mapping, or Bloom level.\n"
             "3. NEVER REFUSE VALID QUESTIONS: Never give generic refusal templates or say 'I cannot answer' for academic, computer science, programming, or curriculum questions. Answer the question completely with clear pedagogical depth, step-by-step logic, and code snippets where appropriate.\n"
             "4. CLEAN MARKDOWN PRESENTATION: Format your response using clean GitHub Markdown with clear bold headers (###), bullet points, and code blocks with syntax highlighting.\n"
             "5. NEXT SUGGESTIONS: Always conclude your response with 2 to 3 concise, highly relevant next question suggestions under a '💡 **Next Suggestions:**' section."
         )
 
-        actual_model = model or ("z-ai/glm-5.3" if provider == "nvidia" else "gemini-2.0-flash")
+        actual_model = model or ("nvidia/nemotron-3.5-bolt-e4b" if provider == "nvidia" else "gemini-2.0-flash")
 
         # Format user prompt with context if history is present
         user_prompt = user_message
@@ -3190,7 +3212,7 @@ class Handler(BaseHTTPRequestHandler):
                     endpoint=endpoint,
                     temperature=0.7,
                     max_tokens=2048,
-                    timeout=18.0
+                    timeout=25.0
                 )
                 if content and content.strip():
                     return content.strip(), m_used
@@ -3626,6 +3648,17 @@ class Handler(BaseHTTPRequestHandler):
 </body>
 </html>"""
 
+class SylexHTTPServer(ThreadingHTTPServer):
+    """One listener per port on Windows; request threads cannot delay shutdown."""
+    daemon_threads = True
+    allow_reuse_address = os.name != "nt"
+
+    def server_bind(self):
+        if os.name == "nt" and hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+        super().server_bind()
+
+
 def main():
     display_host = "localhost" if HOST in {"127.0.0.1", "localhost"} else HOST
     print(f"SYLEX Concurrent Server v3.0 — http://{display_host}:{PORT}")
@@ -3634,7 +3667,7 @@ def main():
     print(f"Mode:   OFFLINE (no internet required) + Threading Enabled")
     print("Press Ctrl+C to stop.\n")
 
-    server = ThreadingHTTPServer((HOST, PORT), Handler)
+    server = SylexHTTPServer((HOST, PORT), Handler)
     SERVER_PID_FILE.write_text(str(os.getpid()), encoding="utf-8")
     try:
         if "--browser" in sys.argv:

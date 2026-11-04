@@ -7,6 +7,9 @@
   <meta name="description" content="Extract structured syllabus data, review curriculum quality, and prepare audit-ready academic records."/>
   <link rel="stylesheet" href="styles.css"/>
   <link rel="stylesheet" href="chat.css"/>
+  <link rel="stylesheet" href="cinematic.css?v=2"/>
+  <link rel="stylesheet" href="workspace.css?v=1"/>
+  <link rel="stylesheet" href="studio.css?v=1"/>
 </head>
 <body>
 <a class="skip-link" href="#section-home">Skip to main content</a>
@@ -28,17 +31,20 @@
     </div>
     <div>
       <div class="name">SYLEX <span class="product-version">3.0</span></div>
-      <div class="version">Curriculum intelligence workspace</div>
+      <div class="version">Curriculum intelligence</div>
     </div>
   </a>
 
-  <div class="nav-links" aria-label="Workspace sections">
+  <button class="nav-menu-toggle" type="button" aria-label="Open navigation" aria-controls="workspace-nav" aria-expanded="false"><span></span><span></span></button>
+  <button class="workspace-launcher" type="button" onclick="window.openWorkspaceSearch()" aria-label="Search workspace (Control K)"><span aria-hidden="true">⌕</span><kbd>Ctrl K</kbd></button>
+  <div id="workspace-nav" class="nav-links" aria-label="Workspace sections">
     <button class="nav-link active" data-nav="home" aria-current="page">Overview</button>
+    <button class="nav-link" data-nav="studio">Studio</button>
     <button class="nav-link" data-nav="extract">Extract</button>
-    <button class="nav-link" data-nav="results">Results Explorer</button>
-    <button class="nav-link" data-nav="books">Book Explorer</button>
-    <button class="nav-link" data-nav="finder">Book Finder</button>
-    <button class="nav-link" data-nav="chat">OBE Assistant</button>
+    <button class="nav-link" data-nav="results">Results</button>
+    <button class="nav-link" data-nav="books">Book search</button>
+    <button class="nav-link" data-nav="finder">Discover</button>
+    <button class="nav-link" data-nav="chat">Assistant</button>
     <button class="nav-link" data-nav="settings">Settings</button>
   </div>
 
@@ -57,44 +63,42 @@
 <!-- ══════════════════════ HOME / OVERVIEW ══════════════════════ -->
 <section id="section-home" class="section active">
 <div class="home-shell">
-  <div class="hero-grid">
+  <div class="cinematic-hero">
+    <video id="home-film" class="home-film" autoplay muted playsinline preload="metadata" aria-hidden="true">
+      <source src="https://d8j0ntlcm91z4.cloudfront.net/user_38xzZboKViGWJOttwIXH07lWA1P/hf_20260328_115001_bcdaa3b4-03de-47e7-ad63-ae3e392c32d4.mp4" type="video/mp4"/>
+    </video>
+    <div class="home-film-shade" aria-hidden="true"></div>
+    <div class="film-index">SYLEX / THE CURRICULUM WORKSPACE <span>01 — 04</span></div>
     <div class="hero-copy">
-      <div class="hero-eyebrow">Academic quality operations</div>
-      <h1 class="hero-title">Turn syllabus PDFs into <span class="omega-word">audit-ready curriculum data.</span></h1>
-      <p class="hero-sub">Extract course structures, outcomes, Bloom levels, and CO–PO mappings into reviewable records. Every result stays linked to the source and unresolved content is reported explicitly.</p>
-      <div class="hero-cta">
-        <button class="btn btn-primary btn-lg" onclick="navigate('extract')">Start an extraction</button>
-        <button class="btn btn-secondary btn-lg" onclick="loadDemo()">View sample analysis</button>
+      <div class="hero-eyebrow">A clearer view of every course</div>
+      <h1 class="hero-title">Built for the <em>curious.</em></h1>
+      <p class="hero-sub">Read the details hidden in a syllabus. Extract evidence, explore the books behind a course, and make every curriculum decision easier to explain.</p>
+      <div class="hero-command liquid-glass">
+        <span class="hero-command-icon" aria-hidden="true">↗</span>
+        <span>Begin with a syllabus PDF</span>
+        <button type="button" onclick="navigate('extract')" aria-label="Start an extraction">→</button>
       </div>
-      <div class="hero-assurances" aria-label="Product assurances">
-        <span>Local-first processing</span>
-        <span>Structured JSON export</span>
-        <span>Traceable exceptions</span>
+      <div class="hero-cta">
+        <button class="hero-text-link" onclick="loadDemo()">Explore sample analysis <span aria-hidden="true">↗</span></button>
+        <button class="hero-text-link" onclick="navigate('finder')">Discover books <span aria-hidden="true">↗</span></button>
       </div>
     </div>
+    <div class="home-hero-bottom"><span>DOCUMENT TO DISCOVERY</span><span>SCROLL TO EXPLORE ↓</span></div>
+  </div>
 
-    <aside class="workflow-card" aria-label="Extraction workflow">
-      <div class="workflow-card-header">
-        <div>
-          <div class="eyebrow-label">Standard workflow</div>
-          <h2>From source to review</h2>
-        </div>
-        <span class="status-pill status-pill--ready">Ready</span>
-      </div>
-      <ol class="workflow-list">
-        <li><span>01</span><div><strong>Ingest</strong><small>Validate and read the syllabus PDF</small></div></li>
-        <li><span>02</span><div><strong>Structure</strong><small>Detect courses, units, and document boundaries</small></div></li>
-        <li><span>03</span><div><strong>Extract</strong><small>Capture outcomes, topics, books, and mappings</small></div></li>
-        <li><span>04</span><div><strong>Verify</strong><small>Reconcile quality checks and unresolved regions</small></div></li>
-        <li><span>05</span><div><strong>Export</strong><small>Deliver JSON, CSV, and accreditation dossiers</small></div></li>
-      </ol>
-    </aside>
+  <div class="home-editorial">
+    <div class="home-editorial-intro"><span class="eyebrow-label">The workspace</span><h2>From source material to <em>clear evidence.</em></h2><p>One place for document extraction, outcome review, book discovery, and the research that follows.</p></div>
+    <div class="home-flow" aria-label="Standard workflow">
+      <article><span>01 / EXTRACT</span><h3>Start with the source.</h3><p>Turn syllabus PDFs into structured courses, units, outcomes, and mappings.</p><button onclick="navigate('extract')">Open extraction ↗</button></article>
+      <article><span>02 / VERIFY</span><h3>See what the document says.</h3><p>Inspect source linked results, quality signals, and unresolved regions.</p><button onclick="navigate('results')">Review results ↗</button></article>
+      <article><span>03 / EXPLORE</span><h3>Follow the references.</h3><p>Find editions, save a research shelf, and search inside accessible books.</p><button onclick="navigate('finder')">Find books ↗</button></article>
+    </div>
   </div>
 
   <div class="capability-grid" aria-label="Core capabilities">
-    <article class="capability-card"><div class="capability-kicker">01 · Extraction</div><h2>Structured by design</h2><p>Converts complex academic documents into predictable course, unit, outcome, and bibliography schemas.</p></article>
-    <article class="capability-card"><div class="capability-kicker">02 · Assurance</div><h2>Reviewable, not opaque</h2><p>Surfaces source pages, quality metrics, and a dedicated ledger for content that cannot be resolved safely.</p></article>
-    <article class="capability-card"><div class="capability-kicker">03 · Delivery</div><h2>Built for academic teams</h2><p>Supports curriculum review, OBE analysis, accreditation evidence, and downstream system integration.</p></article>
+    <article class="capability-card"><div class="capability-kicker">01 · Extraction</div><h2>Every detail, in place.</h2><p>Courses, units, outcomes, and bibliography records are organized for careful review.</p></article>
+    <article class="capability-card"><div class="capability-kicker">02 · Assurance</div><h2>Evidence you can inspect.</h2><p>Source pages, quality signals, and unresolved passages stay visible.</p></article>
+    <article class="capability-card"><div class="capability-kicker">03 · Delivery</div><h2>Ready to take further.</h2><p>Export structured records and build a credible research set for your team.</p></article>
   </div>
 
   <div class="home-footnote">Designed for registrars, curriculum committees, accreditation teams, and academic quality offices.</div>
@@ -102,11 +106,34 @@
 </section>
 
 <!-- ══════════════════════ EXTRACT ══════════════════════ -->
+<section id="section-studio" class="section">
+<div class="page-container page-container--wide studio-shell">
+  <header class="page-header"><div class="eyebrow-label">The curriculum studio</div><h1 class="section-title">Make room for the bigger picture.</h1><p class="section-sub">Keep your syllabi together. See what changed between editions. Turn extracted topics into a study plan you can follow.</p><div class="page-header-actions"><button class="btn btn-primary" id="studio-save-current">Save current analysis &#8599;</button><button class="btn studio-hero-button" id="studio-import">Import project</button><input type="file" id="studio-import-file" accept="application/json,.json" hidden/></div></header>
+  <div class="studio-overview" id="studio-overview" aria-label="Saved project totals"></div>
+  <div class="studio-command-bar"><div class="studio-tabs" role="tablist" aria-label="Studio tools"><button id="studio-tab-library" role="tab" aria-selected="true" aria-controls="studio-library" data-studio-tab="library" tabindex="0">01 <span>Project library</span></button><button id="studio-tab-compare" role="tab" aria-selected="false" aria-controls="studio-compare" data-studio-tab="compare" tabindex="-1">02 <span>Compare editions</span></button><button id="studio-tab-planner" role="tab" aria-selected="false" aria-controls="studio-planner" data-studio-tab="planner" tabindex="-1">03 <span>Study planner</span></button></div><span id="studio-storage-status" role="status" aria-live="polite">Opening your local library&hellip;</span></div>
+  <div id="studio-library" role="tabpanel" aria-labelledby="studio-tab-library">
+    <div class="studio-library-heading"><div><div class="eyebrow-label">A place for every curriculum</div><h2>Your work, ready to resume.</h2></div><div class="studio-library-filters"><label class="sr-only" for="studio-search">Search saved projects</label><input id="studio-search" type="search" placeholder="Find a project or course&hellip;"/><label class="sr-only" for="studio-sort">Sort projects</label><select id="studio-sort"><option value="recent">Recently updated</option><option value="name">Name A&ndash;Z</option><option value="courses">Most courses</option></select></div></div>
+    <div id="studio-projects" class="studio-project-grid" aria-live="polite"></div>
+    <p class="studio-storage-note">Saved in this browser, including the source PDF when available. Export project data for a portable backup; exported JSON does not include the PDF.</p>
+  </div>
+  <div id="studio-compare" role="tabpanel" aria-labelledby="studio-tab-compare" hidden>
+    <div class="studio-tool-intro"><div><div class="eyebrow-label">See the evolution</div><h2>What changed in the curriculum?</h2><p>Compare two saved projects by course identity, topic text, and course outcomes. Detailed differences require course extraction in both projects.</p></div><span class="studio-tool-mark" aria-hidden="true">A &#8644; B</span></div>
+    <form id="studio-compare-form" class="studio-compare-controls"><label>Earlier project<select id="studio-compare-before" required></select></label><span aria-hidden="true">&#8599;</span><label>Later project<select id="studio-compare-after" required></select></label><button class="btn btn-primary" type="submit">Compare projects &#8599;</button></form>
+    <div id="studio-comparison" class="studio-comparison"><div class="studio-empty"><span class="studio-empty-symbol" aria-hidden="true">&#8599;</span><h3>A clearer view of change.</h3><p>Save two curriculum projects, then compare their catalogs and extracted course details here.</p></div></div>
+  </div>
+  <div id="studio-planner" role="tabpanel" aria-labelledby="studio-tab-planner" hidden>
+    <div class="studio-tool-intro"><div><div class="eyebrow-label">From knowledge to a rhythm</div><h2>A plan built from your syllabus.</h2><p>Group the actual extracted topics into manageable sessions. Track your progress and export the plan.</p></div><span class="studio-tool-mark" aria-hidden="true">01 / &infin;</span></div>
+    <form id="studio-plan-form" class="studio-plan-controls"><label>Course from the active analysis<select id="studio-plan-course" required></select></label><label>Study sessions<input id="studio-plan-count" type="number" min="1" max="60" value="12" required/></label><button class="btn btn-primary" type="submit">Build study plan &#8599;</button></form>
+    <div id="studio-plan-output"><div class="studio-empty"><span class="studio-empty-symbol" aria-hidden="true">&#8599;</span><h3>Give every topic a place.</h3><p>Open a saved project or extract a course, then build your study sessions.</p></div></div>
+  </div>
+</div>
+</section>
+
 <section id="section-extract" class="section">
 <div class="page-container page-container--narrow">
   <div class="page-header upload-header">
     <div class="eyebrow-label">New extraction</div>
-    <h1 class="section-title">Process a syllabus document</h1>
+    <h1 class="section-title">Start with a syllabus.</h1>
     <p class="section-sub">Upload a text-based academic PDF, choose the processing mode, and review the structured output before export.</p>
   </div>
 
@@ -244,6 +271,7 @@
   <!-- Run Button -->
   <div class="run-area">
     <button id="btn-run" class="btn-run" disabled>Run extraction</button>
+    <button id="btn-cancel-extraction" class="extraction-cancel" type="button" hidden onclick="window.STATE.extractionController?.abort()">Cancel extraction</button>
   </div>
 
   <!-- Progress bar -->
@@ -280,8 +308,8 @@ python run.py</pre>
 <section id="section-results" class="section">
 <div class="page-container page-container--wide">
   <div class="page-header page-header--row">
-    <div><div class="eyebrow-label">Analysis workspace</div><h1 class="section-title">Extraction results</h1><p class="section-sub">Review structured data, quality checks, and export-ready records.</p></div>
-    <div class="page-header-actions"><span id="results-source-badge" class="data-source-badge" hidden></span><button class="btn btn-secondary" onclick="navigate('extract')">New extraction</button></div>
+    <div><div class="eyebrow-label">Analysis workspace</div><h1 class="section-title">Evidence, made clear.</h1><p class="section-sub">Explore every course, trace its outcomes, and take your findings further.</p></div>
+    <div class="page-header-actions"><span id="results-source-badge" class="data-source-badge" hidden></span><button class="btn btn-secondary" onclick="window.SylexStudio.save()">Save project</button><button class="btn btn-secondary" onclick="navigate('extract')">New extraction</button></div>
   </div>
 
   <div id="results-empty" class="empty-state">
@@ -534,7 +562,7 @@ python run.py</pre>
   <header class="page-header page-header--row book-page-header">
     <div>
       <div class="eyebrow-label">Book Explorer</div>
-      <h1 class="section-title">Find any topic in a book PDF</h1>
+      <h1 class="section-title">Find the page that matters.</h1>
       <p class="section-sub">Upload a textbook, search a topic or lesson name, then open the matching PDF page directly from the result.</p>
     </div>
     <div class="book-privacy-note" role="note">Source preview stays in this browser</div>
@@ -634,8 +662,8 @@ python run.py</pre>
   <header class="page-header page-header--row finder-page-header">
     <div>
       <div class="eyebrow-label">Book Finder</div>
-      <h1 class="section-title">Find the right edition and lawful access</h1>
-      <p class="section-sub">Search trusted public book catalogs by title and author. The discovery agent compares edition metadata, source agreement, and provider-authorized access before offering in-workspace previews or downloads.</p>
+      <h1 class="section-title">Build your reading shelf.</h1>
+      <p class="section-sub">Find the right edition, compare catalog evidence, and collect the books behind your next idea.</p>
     </div>
     <div class="finder-trust-note" role="note">Public catalogs · provider-authorized links only</div>
   </header>
@@ -733,11 +761,34 @@ python run.py</pre>
         <button id="finder-clear-shelf" class="btn btn-sm btn-ghost" type="button" disabled>Clear</button>
       </div>
     </div>
-    <div id="finder-shelf" class="finder-shelf" aria-live="polite">
-      <div class="finder-shelf-empty"><strong>No saved editions yet.</strong><span>Use “Save to shelf” on a catalog result to build a durable research set.</span></div>
-    </div>
+    <div id="finder-visual-shelf" class="bookcase" hidden role="region" aria-label="Saved book shelf"></div>
+    <details class="finder-shelf-records">
+      <summary>Edition details, citations and comparison <span aria-hidden="true">＋</span></summary>
+      <div id="finder-shelf" class="finder-shelf" aria-live="polite">
+        <div class="finder-shelf-empty"><strong>No saved editions yet.</strong><span>Use “Save to shelf” on a catalog result to build a durable research set.</span></div>
+      </div>
+    </details>
     <div id="finder-comparison" class="finder-comparison" hidden></div>
   </section>
+
+  <div id="bookcase-dialog" class="bookcase-dialog" role="dialog" aria-modal="true" aria-labelledby="bookcase-dialog-title" hidden>
+    <div class="bookcase-dialog-backdrop" data-close-bookcase></div>
+    <div class="bookcase-dialog-sheet">
+      <button id="bookcase-dialog-close" class="bookcase-close" type="button">CLOSE <span aria-hidden="true">×</span></button>
+      <div class="bookcase-dialog-cover" id="bookcase-dialog-cover" aria-hidden="true"></div>
+      <div class="bookcase-dialog-copy">
+        <span class="bookcase-overline">SYLEX / RESEARCH SHELF</span>
+        <h2 id="bookcase-dialog-title"></h2>
+        <p id="bookcase-dialog-author"></p>
+        <div id="bookcase-dialog-meta" class="bookcase-dialog-meta"></div>
+        <p id="bookcase-dialog-evidence" class="bookcase-dialog-evidence"></p>
+        <div class="bookcase-dialog-actions">
+          <button id="bookcase-dialog-citation" class="btn btn-primary" type="button">Copy citation ↗</button>
+          <button id="bookcase-dialog-find" class="btn btn-secondary" type="button">Find this edition ↗</button>
+        </div>
+      </div>
+    </div>
+  </div>
 
   <section id="finder-preview-panel" class="finder-preview-panel" hidden aria-labelledby="finder-preview-title">
     <div class="finder-preview-toolbar">
@@ -758,6 +809,7 @@ python run.py</pre>
 
 <!-- ══════════════════════ CHAT ASSISTANT ══════════════════════ -->
 <section id="section-chat" class="section">
+<div class="page-container assistant-intro"><header class="page-header"><div><div class="eyebrow-label">Curriculum assistant</div><h1 class="section-title">A little more perspective.</h1><p class="section-sub">Explore outcomes, ask better questions, and build on the evidence in your syllabus.</p></div></header></div>
 <div class="chat-layout">
 
   <!-- Left: Context Panel -->
@@ -865,7 +917,13 @@ python run.py</pre>
 <!-- ══════════════════════ SETTINGS ══════════════════════ -->
 <section id="section-settings" class="section">
 <div class="page-container">
-  <div class="page-header"><div class="eyebrow-label">Administration</div><h1 class="section-title">Workspace settings</h1><p class="section-sub">Manage the extraction service, cloud model, and document boundary overrides.</p></div>
+  <div class="page-header"><div class="eyebrow-label">Your workspace</div><h1 class="section-title">Set up for your workflow.</h1><p class="section-sub">Manage connections, check service availability, and fine-tune how your documents are processed.</p></div>
+
+  <section class="service-console" aria-labelledby="service-console-title">
+    <div class="service-console-heading"><div><span class="eyebrow-label">Connection health</span><h2 id="service-console-title">Know what’s ready.</h2><p>Checks the local engine, cloud model, and book catalogs. Catalog checks use a public sample title and do not change your shelf.</p></div><div class="service-console-actions"><button id="service-check" class="btn btn-primary" type="button">Check all connections ↗</button><button id="service-report" class="btn btn-ghost" type="button" disabled>Download report</button></div></div>
+    <div id="service-results" class="service-results" aria-live="polite"><p class="service-idle">Run a connection check to see current availability.</p></div>
+    <div id="service-checked-at" class="service-checked-at"></div>
+  </section>
 
   <div class="settings-grid">
     <div class="settings-group">
@@ -886,12 +944,13 @@ python run.py</pre>
       </div>
       <label for="cloud-model-select" style="display:block;margin-bottom:0.45rem;font-size:0.72rem;font-weight:700;color:var(--text-muted);text-transform:uppercase">Model</label>
       <select id="cloud-model-select" class="select-input" onchange="saveCloudModelSetting()">
-        <option value="z-ai/glm-5.3" selected>Z.ai GLM-5.3</option>
+        <option value="nvidia/nemotron-3.5-bolt-e4b" selected>NVIDIA Nemotron 3.5 Bolt</option>
+        <option value="z-ai/glm-5.3-flash">Z.ai GLM-5.3 Flash</option>
         <option value="meta/llama-3.2-11b-vision-instruct">Meta Llama 3.2 11B (Fast)</option>
         <option value="openai/gpt-oss-20b">OpenAI GPT-OSS 20B</option>
       </select>
       <div style="margin-top:0.75rem;font-size:0.76rem;color:var(--text-muted)">
-        Connection credentials are managed by the deployed Vercel server.
+        Connection credentials are managed by your SYLEX server.
       </div>
     </div>
 
@@ -944,6 +1003,13 @@ python run.py</pre>
 </section>
 
 </div><!-- /app -->
+
+<dialog id="workspace-search" class="workspace-search" aria-labelledby="workspace-search-title">
+  <div class="workspace-search-top"><label id="workspace-search-title" for="workspace-query">Go anywhere</label><button type="button" class="workspace-search-close" aria-label="Close workspace search">Esc</button></div>
+  <input id="workspace-query" type="search" placeholder="Search pages, actions, or your extracted courses…" autocomplete="off" aria-controls="workspace-matches"/>
+  <div id="workspace-matches" class="workspace-matches"></div>
+  <p class="workspace-search-hint">↑ ↓ to navigate · Enter to open · Esc to close</p>
+</dialog>
 
 <!-- ══════════════════════ MODALS ══════════════════════ -->
 
@@ -1011,9 +1077,16 @@ python run.py</pre>
 </div>
 
 <script src="demo-data.js"></script>
+<script src="api-client.js?v=1"></script>
 <script src="app.js"></script>
 <script src="book.js"></script>
 <script src="book-finder.js"></script>
 <script src="chat.js"></script>
+<script src="cinematic.js?v=2"></script>
+<script src="workspace.js?v=1"></script>
+<script src="studio-core.js?v=1"></script>
+<script src="studio-store.js?v=1"></script>
+<script src="studio.js?v=1"></script>
+<dialog id="studio-project-dialog" class="studio-dialog" aria-labelledby="studio-dialog-title"><form id="studio-project-form"><div class="studio-dialog-top"><span class="eyebrow-label">Your curriculum workspace</span><button type="button" class="studio-close-dialog" aria-label="Close project dialog">&times;</button></div><h2 id="studio-dialog-title">Save this chapter.</h2><p id="studio-dialog-description">Keep your source document, extracted courses, and notes together in this browser.</p><label>Project name<input id="studio-project-name" maxlength="120" required autocomplete="off"/></label><label>Research notes<textarea id="studio-project-notes" maxlength="20000" rows="5" placeholder="Decisions, questions, and what to review next&hellip;"></textarea></label><p id="studio-dialog-error" role="alert"></p><div class="studio-dialog-actions"><button type="button" class="btn btn-secondary studio-close-dialog">Cancel</button><button id="studio-project-submit" class="btn btn-primary" type="submit">Save project</button></div></form></dialog>
 </body>
 </html>

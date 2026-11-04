@@ -1,31 +1,18 @@
-#!/usr/bin/env python3
-"""Vercel Serverless Function: GET /api/status"""
+"""Use the same capability report locally and in Vercel."""
+import sys
+from pathlib import Path
 
-import json
-from http.server import BaseHTTPRequestHandler
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 
-class handler(BaseHTTPRequestHandler):
-    def do_OPTIONS(self):
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET,POST,OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.end_headers()
+from sylex_server import Handler
 
+
+class handler(Handler):
     def do_GET(self):
-        body = json.dumps({
-            "status": "online",
-            "version": "3.0",
-            "offline": True,
-            "platform": "vercel-serverless"
-        }, indent=2).encode('utf-8')
-
-        self.send_response(200)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Content-Length", str(len(body)))
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
-        self.wfile.write(body)
+        self.path = "/api/status"
+        super().do_GET()
 
     def do_POST(self):
-        self.do_GET()
+        self.send_json({"error": "Use GET /api/status"}, 405)

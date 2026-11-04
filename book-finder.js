@@ -11,6 +11,8 @@ const finderState = {
   references: [],
   shelf: [],
   comparisonIds: new Set(),
+  bookcaseSelectedId: null,
+  bookcaseReturnFocus: null,
 };
 
 const finderElement = id => document.getElementById(id);
@@ -387,6 +389,9 @@ function toggleFinderShelfRecord(record) {
   persistFinderShelf();
   renderFinderShelf();
   syncFinderShelfButtons();
+  if (existingIndex < 0 && finderState.shelf.length === 1) {
+    finderElement('finder-visual-shelf')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  }
 }
 
 function useShelfRecord(record) {
@@ -494,6 +499,13 @@ function renderFinderComparison() {
 
 function renderFinderShelf() {
   const shelf = finderElement('finder-shelf');
+  const panel = document.querySelector('.finder-shelf-panel');
+  const workspace = document.querySelector('.finder-workspace');
+  if (panel && workspace) {
+    if (finderState.shelf.length) workspace.before(panel);
+    else workspace.after(panel);
+    panel.classList.toggle('has-books', finderState.shelf.length > 0);
+  }
   const count = finderElement('finder-shelf-count');
   const compare = finderElement('finder-compare-shelf');
   const exportButton = finderElement('finder-export-shelf');
@@ -525,6 +537,179 @@ function renderFinderShelf() {
     }
   }
   renderFinderComparison();
+  renderBookcase();
+}
+
+// The visual shelf is another view of the same saved records. The accessible
+// cards and their citation/compare actions remain immediately below it.
+function bookcaseActiveIndex() {
+  const index = finderState.shelf.findIndex(record => record.shelf_id === finderState.bookcaseSelectedId);
+  return index < 0 ? 0 : index;
+}
+
+function bookcaseMove(step) {
+  const count = finderState.shelf.length;
+  if (!count) return;
+  const next = (bookcaseActiveIndex() + step % count + count) % count;
+  finderState.bookcaseSelectedId = finderState.shelf[next].shelf_id;
+  renderBookcase();
+}
+
+function bookcaseCover(record, className) {
+  const cover = document.createElement('div');
+  cover.className = className + (record.cover_url ? ' has-image' : '');
+  if (record.cover_url) {
+    const image = document.createElement('img');
+    image.src = record.cover_url;
+    image.alt = '';
+    image.referrerPolicy = 'no-referrer';
+    image.addEventListener('error', () => {
+      image.remove();
+      cover.classList.remove('has-image');
+    }, { once: true });
+    cover.append(image);
+  }
+  const imprint = document.createElement('span');
+  imprint.className = 'bookcase-imprint';
+  imprint.textContent = 'SYLEX / RESEARCH EDITION';
+  const title = document.createElement('strong');
+  title.textContent = record.title;
+  const author = document.createElement('small');
+  author.textContent = record.authors?.[0] || 'AUTHOR UNKNOWN';
+  cover.append(imprint, title, author);
+  return cover;
+}
+
+function renderBookcase() {
+  const root = finderElement('finder-visual-shelf');
+  if (!root) return;
+  const previousTransforms = new Map([...root.querySelectorAll('.bookcase-volume')]
+    .map(volume => [volume.dataset.bookcaseId, getComputedStyle(volume).transform]));
+  const records = finderState.shelf;
+  root.hidden = !records.length;
+  if (!records.length) return;
+  const activeIndex = bookcaseActiveIndex();
+  const active = records[activeIndex];
+  finderState.bookcaseSelectedId = active.shelf_id;
+  const heading = document.createElement('div');
+  heading.className = 'bookcase-heading';
+  heading.innerHTML = '<span>THE RESEARCH ARCHIVE</span><span>DRAG / SCROLL / SELECT A SPINE</span>';
+  const stage = document.createElement('div');
+  stage.className = 'bookcase-stage';
+  stage.setAttribute('role', 'group');
+  stage.setAttribute('aria-label', 'Saved editions');
+  const spacing = Math.max(42, Math.min(68, root.clientWidth / 12));
+  records.forEach((record, index) => {
+    let relative = index - activeIndex;
+    if (relative > records.length / 2) relative -= records.length;
+    if (relative < -records.length / 2) relative += records.length;
+    if (Math.abs(relative) > 7) return;
+    const volume = document.createElement('button');
+    volume.type = 'button';
+    volume.className = 'bookcase-volume' + (relative === 0 ? ' is-active' : '');
+    volume.dataset.bookcaseId = record.shelf_id;
+    volume.setAttribute('aria-label', relative === 0 ? `Open ${record.title}` : `Select ${record.title}`);
+    volume.style.setProperty('--x', `${relative * spacing + (relative ? Math.sign(relative) * 96 : 0)}px`);
+    volume.style.setProperty('--z', String(100 - Math.abs(relative)));
+    volume.style.setProperty('--book-hue', String((index * 31 + 208) % 360));
+    const spine = document.createElement('span');
+    spine.className = 'bookcase-spine';
+    const spineTitle = document.createElement('span');
+    spineTitle.textContent = record.title;
+    const spineMark = document.createElement('small');
+    spineMark.textContent = record.year || 'SYLEX';
+    spine.append(spineTitle, spineMark);
+    volume.append(spine, bookcaseCover(record, 'bookcase-front'));
+    volume.addEventListener('click', () => {
+      if (finderState.bookcaseSelectedId === record.shelf_id) openBookcaseDetail(record, volume);
+      else {
+        finderState.bookcaseSelectedId = record.shelf_id;
+        renderBookcase();
+      }
+    });
+    stage.append(volume);
+  });
+  let startX = 0;
+  let dragged = false;
+  stage.addEventListener('pointerdown', event => { startX = event.clientX; dragged = false; });
+  stage.addEventListener('pointerup', event => {
+    const dx = event.clientX - startX;
+    if (Math.abs(dx) > 38) { dragged = true; bookcaseMove(dx < 0 ? 1 : -1); }
+  });
+  stage.addEventListener('click', event => { if (dragged) { event.stopPropagation(); dragged = false; } }, true);
+  stage.addEventListener('wheel', event => {
+    event.preventDefault();
+    if (Math.abs(event.deltaX) + Math.abs(event.deltaY) > 5) bookcaseMove((event.deltaX || event.deltaY) > 0 ? 1 : -1);
+  }, { passive: false });
+  const footer = document.createElement('div');
+  footer.className = 'bookcase-footer';
+  const previous = createFinderButton('←', 'bookcase-arrow', () => {
+    bookcaseMove(-1);
+    root.querySelector('.bookcase-arrow')?.focus();
+  });
+  previous.setAttribute('aria-label', 'Previous saved book');
+  const caption = document.createElement('div');
+  caption.className = 'bookcase-caption';
+  const title = document.createElement('strong');
+  title.textContent = active.title;
+  const meta = document.createElement('span');
+  meta.textContent = [active.authors?.[0] || 'Author unknown', active.year || 'Year unknown', `${activeIndex + 1} / ${records.length}`].join('  /  ');
+  caption.append(title, meta);
+  const next = createFinderButton('→', 'bookcase-arrow', () => {
+    bookcaseMove(1);
+    root.querySelectorAll('.bookcase-arrow')[1]?.focus();
+  });
+  next.setAttribute('aria-label', 'Next saved book');
+  footer.append(previous, caption, next);
+  const open = createFinderButton('OPEN EDITION ↗', 'bookcase-open', () => openBookcaseDetail(active, stage.querySelector('.is-active')));
+  root.replaceChildren(heading, stage, footer, open);
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    stage.querySelectorAll('.bookcase-volume').forEach(volume => {
+      const from = previousTransforms.get(volume.dataset.bookcaseId);
+      const to = getComputedStyle(volume).transform;
+      if (from && from !== to) {
+        volume.animate([{ transform: from }, { transform: to }], {
+          duration: 680,
+          easing: 'cubic-bezier(.2,.8,.2,1)',
+        });
+      }
+    });
+  }
+}
+
+function openBookcaseDetail(record, source) {
+  const dialog = finderElement('bookcase-dialog');
+  const sheet = dialog?.querySelector('.bookcase-dialog-sheet');
+  if (!dialog || !sheet) return;
+  finderState.bookcaseReturnFocus = source || document.activeElement;
+  finderElement('bookcase-dialog-title').textContent = record.title;
+  finderElement('bookcase-dialog-author').textContent = record.authors?.join(', ') || 'Author not listed';
+  finderElement('bookcase-dialog-meta').textContent = [record.year || 'Year not listed', record.publisher || 'Publisher not listed', record.identifiers?.[0] ? `ISBN ${record.identifiers[0]}` : 'ISBN not listed'].join(' / ');
+  finderElement('bookcase-dialog-evidence').textContent = `${record.match_confidence}% catalog confidence · ${record.availability} · ${record.source_names?.join(', ') || 'Catalog record'}`;
+  finderElement('bookcase-dialog-cover').replaceChildren(bookcaseCover(record, 'bookcase-detail-cover'));
+  finderElement('bookcase-dialog-citation').onclick = () => copyFinderCitation(record);
+  finderElement('bookcase-dialog-find').onclick = () => { closeBookcaseDetail(); useShelfRecord(record); };
+  dialog.hidden = false;
+  document.body.classList.add('bookcase-is-open');
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches && source) {
+    const from = (source.querySelector('.bookcase-front') || source).getBoundingClientRect();
+    const to = sheet.getBoundingClientRect();
+    const dx = from.left + from.width / 2 - (to.left + to.width / 2);
+    const dy = from.top + from.height / 2 - (to.top + to.height / 2);
+    sheet.animate([
+      { transform: `translate(${dx}px, ${dy}px) scale(.35) rotate(-4deg)`, clipPath: 'inset(0 0 0 0 round 8px)' },
+      { transform: 'translate(0, 0) scale(1) rotate(0)', clipPath: 'inset(0 0 0 0 round 4px)' }
+    ], { duration: 750, easing: 'cubic-bezier(.2,.8,.2,1)' });
+  }
+  finderElement('bookcase-dialog-close').focus();
+}
+
+function closeBookcaseDetail() {
+  const dialog = finderElement('bookcase-dialog');
+  if (!dialog || dialog.hidden) return;
+  dialog.hidden = true;
+  document.body.classList.remove('bookcase-is-open');
+  finderState.bookcaseReturnFocus?.focus?.();
 }
 
 function closeFinderPreview() {
@@ -914,18 +1099,12 @@ async function searchFinder(event) {
     stages: [{ name: 'Running', detail: 'Querying catalog APIs in parallel and validating candidates…' }],
   });
   try {
-    const baseUrl = String(window.STATE.serverUrl || window.location.origin).replace(/\/$/, '');
-    const response = await fetch(`${baseUrl}/api/book-discovery`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ title, author, isbn }),
-      signal: controller.signal,
-    });
-    const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw new Error(data.error || `Catalog search failed (${response.status})`);
+    const data = await window.SylexAPI.request('book-discovery', { json: { title, author, isbn }, signal: controller.signal, timeout: BOOK_FINDER_TIMEOUT_MS });
+    if (finderState.abortController !== controller) return;
     renderFinderResults(data);
     finderToast(data.results?.length ? 'Catalog matches updated' : 'No catalog matches found', data.results?.length ? 'success' : 'info');
   } catch (error) {
+    if (finderState.abortController !== controller) return;
     const timedOut = error?.name === 'AbortError';
     setFinderProviderStatus(timedOut ? 'Catalog search timed out' : 'Catalog search failed');
     setFinderSummary(timedOut ? 'The public catalog request took too long. Please try again.' : (error.message || 'Unable to search public catalogs right now.'));
@@ -936,8 +1115,10 @@ async function searchFinder(event) {
     finderToast(timedOut ? 'Catalog search timed out' : (error.message || 'Catalog search failed'), 'error');
   } finally {
     window.clearTimeout(timeout);
-    if (finderState.abortController === controller) finderState.abortController = null;
-    setFinderBusy(false);
+    if (finderState.abortController === controller) {
+      finderState.abortController = null;
+      setFinderBusy(false);
+    }
   }
 }
 
@@ -954,6 +1135,19 @@ function initBookFinder() {
     finderElement('finder-use-reference').disabled = !selected;
   });
   finderElement('finder-preview-close')?.addEventListener('click', closeFinderPreview);
+  finderElement('bookcase-dialog-close')?.addEventListener('click', closeBookcaseDetail);
+  finderElement('bookcase-dialog')?.querySelector('[data-close-bookcase]')?.addEventListener('click', closeBookcaseDetail);
+  finderElement('finder-visual-shelf')?.addEventListener('keydown', event => {
+    if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+      event.preventDefault();
+      bookcaseMove(event.key === 'ArrowRight' ? 1 : -1);
+      finderElement('finder-visual-shelf')?.querySelector('.bookcase-open')?.focus();
+    }
+  });
+  document.addEventListener('keydown', event => {
+    const dialog = finderElement('bookcase-dialog');
+    if (event.key === 'Escape' && dialog && !dialog.hidden) closeBookcaseDetail();
+  });
   finderElement('finder-compare-shelf')?.addEventListener('click', () => {
     renderFinderComparison();
     finderElement('finder-comparison')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -972,4 +1166,5 @@ function initBookFinder() {
 
 window.openBookFinder = openBookFinder;
 window.openFinderPreview = openFinderPreview;
+window.renderBookcase = renderBookcase;
 document.addEventListener('DOMContentLoaded', initBookFinder);

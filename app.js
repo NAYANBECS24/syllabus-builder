@@ -4,7 +4,7 @@ const isLocal = typeof window !== 'undefined' &&
   (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1');
 
 // ── Provider defaults ────────────────────────────────────────────────
-const SYLEX_NVIDIA_MODEL = 'z-ai/glm-5.3';
+const SYLEX_NVIDIA_MODEL = 'nvidia/nemotron-3.5-bolt-e4b';
 const SYLEX_CLOUD_PROVIDER = 'nvidia';
 const SYLEX_CLOUD_AUTOFALLBACK = true;
 if (typeof window !== 'undefined') {
@@ -72,10 +72,19 @@ function navigate(section) {
     link.setAttribute('aria-current', 'page');
   }
   STATE.section = section;
+  document.body.classList.toggle('is-home', section === 'home');
+  document.querySelector('.navbar')?.classList.remove('menu-open');
+  const menuToggle = document.querySelector('.nav-menu-toggle');
+  if (menuToggle) {
+    menuToggle.setAttribute('aria-expanded', 'false');
+    menuToggle.setAttribute('aria-label', 'Open navigation');
+  }
+  if (section === 'finder') window.requestAnimationFrame(() => window.renderBookcase?.());
   if (window.location.hash !== `#${section}`) {
     window.history.replaceState(null, '', `#${section}`);
   }
   window.scrollTo?.({ top: 0, behavior: 'auto' });
+  document.dispatchEvent(new CustomEvent('sylex:navigate', { detail: { section } }));
 }
 window.navigate = navigate;
 
@@ -118,6 +127,7 @@ function syncTaskFields() {
 }
 
 function handleFile(f) {
+  if (STATE.extractionBusy) { toast('Cancel the current extraction before changing documents', 'info'); return; }
   if (!f.name.toLowerCase().endsWith('.pdf')) {
     toast('Please select a PDF file', 'error'); return;
   }
@@ -126,12 +136,17 @@ function handleFile(f) {
   }
   if (STATE.activeTask2AbortController) {
     try { STATE.activeTask2AbortController.abort(); } catch (_) {}
+    STATE.activeTask2AbortController = null;
   }
+  document.dispatchEvent(new CustomEvent('sylex:document'));
   STATE.pdfFile = f;
   STATE.courseCache = {};
   STATE.task1Result = null;
   STATE.task2Result = null;
   STATE.dataSource = null;
+  window.clearChat?.();
+  if (window.CHAT) window.CHAT.context = null;
+  window.updateContextPanel?.(null);
   $('chosen-name').textContent = f.name;
   $('chosen-size').textContent = fmtBytes(f.size);
   $('file-chosen').classList.add('visible');
@@ -141,6 +156,9 @@ function handleFile(f) {
 }
 
 function clearFile() {
+  if (STATE.extractionBusy) { toast('Cancel the current extraction before removing the document', 'info'); return; }
+  STATE.activeTask2AbortController?.abort();
+  STATE.activeTask2AbortController = null;
   STATE.pdfFile = null;
   STATE.courseCache = {};
   $('file-chosen').classList.remove('visible');
@@ -258,7 +276,7 @@ function loadOnlineSettings() {
   const selector = $('cloud-model-select');
   let savedModel = localStorage.getItem('sylex_cloud_model');
   const available = selector ? [...selector.options].map(o => o.value) : [];
-  if (savedModel && (!available.includes(savedModel) || savedModel.includes('nemotron'))) {
+  if (savedModel && !available.includes(savedModel)) {
     savedModel = SYLEX_NVIDIA_MODEL;
     localStorage.setItem('sylex_cloud_model', savedModel);
   }
@@ -286,7 +304,7 @@ async function testOnlineKey() {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ provider, model }),
-      signal: AbortSignal.timeout(25000)
+      signal: AbortSignal.timeout(35000)
     });
     const data = await resp.json().catch(() => ({}));
     if (!resp.ok || data.status !== 'ok') {
@@ -310,6 +328,7 @@ window.testOnlineKey = testOnlineKey;
 
 // ── Extraction ──────────────────────────────────────────────────────
 async function runExtraction() {
+  if (STATE.extractionBusy) return;
   if (!STATE.pdfFile) { toast('Select a PDF first', 'error'); return; }
 
   const task   = $('task-select')?.value || '1';
@@ -332,6 +351,13 @@ async function runExtraction() {
   // Show progress
   $('extract-progress').style.display = 'block';
   $('btn-run').disabled = true;
+  STATE.extractionBusy = true;
+  const controller = new AbortController();
+  STATE.extractionController = controller;
+  let timedOut = false;
+  const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 120000);
+  $('section-extract').dataset.busy = 'true';
+  $('btn-cancel-extraction').hidden = false;
   setProgress(5, mode === 'online' ? 'Contacting Cloud AI...' : 'Uploading PDF to engine...');
 
   try {
@@ -366,7 +392,7 @@ async function runExtraction() {
     setProgress(20, mode === 'online' ? 'Running Cloud AI Extraction...' : 'Sending to offline engine...');
     const resp = await fetch(STATE.serverUrl + '/api/extract', {
       method: 'POST', body: form,
-      signal: AbortSignal.timeout(120000),
+      signal: controller.signal,
     });
 
     setProgress(70, 'Processing response...');
@@ -380,7 +406,7 @@ async function runExtraction() {
         form.set('mode', 'offline');
         const fallbackResp = await fetch(STATE.serverUrl + '/api/extract', {
           method: 'POST', body: form,
-          signal: AbortSignal.timeout(120000),
+          signal: controller.signal,
         });
         data = await fallbackResp.json().catch(() => ({}));
         if (!fallbackResp.ok || data.error) {
@@ -408,7 +434,8 @@ async function runExtraction() {
       navigate('results');
       switchResultsTab('deep');
     }
-    toast(`${mode === 'online' ? 'Cloud-assisted' : 'Local'} extraction complete`, 'success');
+    const actualMode = data._processing?.used_mode || (data._debug?.fallback_mode === 'offline' ? 'offline' : mode);
+    toast(data._processing?.reason || `${actualMode === 'online' ? 'Cloud-assisted' : 'Local'} extraction complete`, 'success');
 
     // Update chat context
     const ctx = { task1: STATE.task1Result, task2: STATE.task2Result };
@@ -416,10 +443,15 @@ async function runExtraction() {
     updateContextPanel(ctx);
 
   } catch (e) {
-    toast(e.message, 'error');
+    toast(e.name === 'AbortError' ? (timedOut ? 'Extraction timed out. Try a smaller document or the local mode.' : 'Extraction cancelled') : e.message, timedOut || e.name !== 'AbortError' ? 'error' : 'info');
   } finally {
+    clearTimeout(timeout);
+    STATE.extractionBusy = false;
+    STATE.extractionController = null;
+    $('section-extract').dataset.busy = 'false';
+    $('btn-cancel-extraction').hidden = true;
     $('extract-progress').style.display = 'none';
-    $('btn-run').disabled = false;
+    $('btn-run').disabled = !STATE.pdfFile;
   }
 }
 
@@ -436,6 +468,10 @@ function loadDemo() {
     toast('Sample data is unavailable', 'error');
     return;
   }
+  document.dispatchEvent(new CustomEvent('sylex:document'));
+  STATE.pdfFile = null;
+  STATE.activeTask2AbortController?.abort();
+  STATE.activeTask2AbortController = null;
   STATE.task1Result = DEMO_TASK1;
   STATE.task2Result = DEMO_TASK2;
   STATE.dataSource = 'sample';
@@ -473,6 +509,7 @@ function renderAll() {
   renderLedger();
   renderJSON();
   renderAIReasoning();
+  document.dispatchEvent(new CustomEvent('sylex:results'));
 }
 
 // Stats bar
@@ -571,6 +608,8 @@ function renderTask2Error(course, message) {
 }
 
 async function loadTask2ForCourse(course) {
+  STATE.activeTask2AbortController?.abort();
+  STATE.activeTask2AbortController = null;
   const codeOrTitle = course.code || course.title || '';
   if ($('course-input')) $('course-input').value = codeOrTitle;
   if ($('task-select')) $('task-select').value = '2';
@@ -581,6 +620,8 @@ async function loadTask2ForCourse(course) {
   const cacheKey = (course.code || course.title || '').trim().toUpperCase();
   if (cacheKey && STATE.courseCache[cacheKey]) {
     STATE.task2Result = STATE.courseCache[cacheKey];
+    CHAT.context = { task1: STATE.task1Result, task2: STATE.task2Result };
+    updateContextPanel(CHAT.context);
     renderTask2();
     renderCurriculumAudit();
     switchResultsTab('deep');
@@ -642,6 +683,7 @@ async function loadTask2ForCourse(course) {
       });
       clearTimeout(timeoutId);
       const data = await resp.json().catch(() => ({}));
+      if (STATE.activeTask2AbortController !== abortCtrl) return;
       if (!resp.ok || data.error) {
         const message = data.error || `Extraction failed with HTTP ${resp.status}`;
         toast(message, 'error');
@@ -661,6 +703,7 @@ async function loadTask2ForCourse(course) {
       CHAT.context = ctx;
       updateContextPanel(ctx);
     } catch (e) {
+      if (STATE.activeTask2AbortController !== abortCtrl) return;
       clearTimeout(timeoutId);
       if (e.name === 'AbortError') {
         if (STATE.activeTask2AbortController === abortCtrl) {
@@ -758,22 +801,25 @@ function renderTask2() {
     unitsEl.innerHTML = '';
     (d2.units||[]).forEach(unit => {
       const acc    = document.createElement('div');
-      acc.className = 'unit-accordion';
-      const header = document.createElement('div');
-      header.className = 'unit-accordion-header';
+      acc.className = 'unit-accordion unit-card';
+      const header = document.createElement('button');
+      header.type = 'button';
+      header.className = 'unit-accordion-header unit-header';
       header.innerHTML = `
         <div class="unit-number">${unit.number}</div>
         <div class="unit-title">${esc(unit.title)}</div>
         <div class="unit-hours">${unit.hours || '—'} hrs</div>
         <div class="unit-chevron">▼</div>`;
       const body = document.createElement('div');
-      body.className = 'unit-accordion-body';
-      body.innerHTML = `<div class="unit-text-block">${esc(unit.text || '')}</div>`;
+      body.className = 'unit-accordion-body unit-body';
+      body.hidden = unitsEl.childElementCount > 0;
+      header.setAttribute('aria-expanded', String(!body.hidden));
+      body.innerHTML = `<div class="unit-text-block unit-text">${esc(unit.text || '')}</div>`;
       const grid = document.createElement('div');
       grid.className = 'topics-grid';
       (unit.topics||[]).forEach(t => {
         const row = document.createElement('div');
-        row.className = 'topic-row';
+        row.className = 'topic-row topic-item';
         row.innerHTML = `
           <span class="topic-id">${esc(t.id)}</span>
           <span class="topic-text">${esc(t.text)}</span>
@@ -784,7 +830,11 @@ function renderTask2() {
         grid.appendChild(row);
       });
       body.appendChild(grid);
-      header.addEventListener('click', () => acc.classList.toggle('open'));
+      header.addEventListener('click', () => {
+        body.hidden = !body.hidden;
+        header.setAttribute('aria-expanded', String(!body.hidden));
+        if (!body.hidden) document.dispatchEvent(new CustomEvent('sylex:tab', { detail: { element: body } }));
+      });
       acc.appendChild(header);
       acc.appendChild(body);
       unitsEl.appendChild(acc);
@@ -799,10 +849,10 @@ function renderTask2() {
     if (!cos.length) { coEl.innerHTML = '<div class="empty-pane">No COs extracted</div>'; }
     cos.forEach(co => {
       const item = document.createElement('div');
-      item.className = 'co-item';
+      item.className = 'co-item outcome-card';
       item.innerHTML = `
-        <div class="co-id">${esc(co.id)}</div>
-        <div class="co-text">${esc(co.text)}</div>
+        <div class="co-id outcome-id">${esc(co.id)}</div>
+        <div class="co-text outcome-text">${esc(co.text)}</div>
         <div class="co-bloom"><span class="bloom-badge bloom-${co.bloom}"><span class="bs-dot"></span>${co.bloom} <small style="opacity:0.6">${co.bloom_source==='printed'?'🖨️':'🔍'}</small></span></div>`;
       coEl.appendChild(item);
     });
@@ -816,8 +866,8 @@ function renderTask2() {
     if (!pos.length) { poEl.innerHTML = '<div class="empty-pane">No POs extracted (or not in document)</div>'; }
     pos.forEach(po => {
       const item = document.createElement('div');
-      item.className = 'po-item';
-      item.innerHTML = `<div class="po-id">${esc(po.id)}</div><div class="po-text">${esc(po.text)}</div>`;
+      item.className = 'po-item outcome-card';
+      item.innerHTML = `<div class="po-id outcome-id">${esc(po.id)}</div><div class="po-text outcome-text">${esc(po.text)}</div>`;
       poEl.appendChild(item);
     });
   }
@@ -881,7 +931,7 @@ function renderTask2() {
       const wrap = document.createElement('div');
       wrap.style.overflowX = 'auto';
       const table = document.createElement('table');
-      table.className = 'books-table';
+      table.className = 'books-table result-table';
       table.innerHTML = `<thead><tr><th>#</th><th>Kind</th><th>Title / Author</th><th>Publisher</th><th>Ed.</th><th>Year</th><th>Access</th></tr></thead>`;
       const tbody = document.createElement('tbody');
       books.forEach((b,i) => {
@@ -1010,6 +1060,7 @@ function switchResultsTab(tab) {
   selectedTab?.classList.add('active');
   selectedTab?.setAttribute('aria-selected', 'true');
   $(`tab-${tab}`)?.classList.add('active');
+  document.dispatchEvent(new CustomEvent('sylex:tab', { detail: { element: $(`tab-${tab}`) } }));
   if (tab === 'audit') {
     renderCurriculumAudit();
   }
@@ -1026,6 +1077,7 @@ function switchT2Tab(tab) {
   selectedTab?.setAttribute('aria-selected', 'true');
   const pane = $(`t2-${tab}`);
   if (pane) { pane.classList.add('active'); pane.style.display='block'; }
+  document.dispatchEvent(new CustomEvent('sylex:tab', { detail: { element: pane } }));
 }
 
 // ── Copy / download ──────────────────────────────────────────────────
@@ -1781,5 +1833,5 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   const initialSection = window.location.hash.replace(/^#/, '');
-  navigate(['home', 'extract', 'results', 'books', 'finder', 'chat', 'settings'].includes(initialSection) ? initialSection : 'home');
+  navigate(['home', 'studio', 'extract', 'results', 'books', 'finder', 'chat', 'settings'].includes(initialSection) ? initialSection : 'home');
 });
