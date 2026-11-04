@@ -128,11 +128,11 @@ function syncTaskFields() {
 
 function handleFile(f) {
   if (STATE.extractionBusy) { toast('Cancel the current extraction before changing documents', 'info'); return; }
-  if (!f.name.toLowerCase().endsWith('.pdf')) {
-    toast('Please select a PDF file', 'error'); return;
+  if (!/\.(pdf|docx|txt|md|png|jpe?g|tiff?)$/i.test(f.name)) {
+    toast('Select a PDF, DOCX, TXT, Markdown or image file', 'error'); return;
   }
   if (f.size > 50 * 1024 * 1024) {
-    toast('PDF exceeds the 50 MB upload limit', 'error'); return;
+    toast('Document exceeds the 50 MB upload limit', 'error'); return;
   }
   if (STATE.activeTask2AbortController) {
     try { STATE.activeTask2AbortController.abort(); } catch (_) {}
@@ -140,6 +140,7 @@ function handleFile(f) {
   }
   document.dispatchEvent(new CustomEvent('sylex:document'));
   STATE.pdfFile = f;
+  STATE.hintsData = null;
   STATE.courseCache = {};
   STATE.task1Result = null;
   STATE.task2Result = null;
@@ -327,9 +328,18 @@ async function testOnlineKey() {
 window.testOnlineKey = testOnlineKey;
 
 // ── Extraction ──────────────────────────────────────────────────────
+function onlineReviewOptions() {
+  const startValue = $('online-start-page')?.value;
+  const endValue = $('online-end-page')?.value;
+  if (!startValue && !endValue) return null;
+  const start = Number(startValue || 1), end = endValue ? Number(endValue) : null;
+  if (!Number.isInteger(start) || start < 1 || start > 1500 || (end !== null && (!Number.isInteger(end) || end < start || end > 1500))) throw new Error('Choose an ordered cloud review page range between 1 and 1500.');
+  return { start_page: start, end_page: end };
+}
+
 async function runExtraction() {
   if (STATE.extractionBusy) return;
-  if (!STATE.pdfFile) { toast('Select a PDF first', 'error'); return; }
+  if (!STATE.pdfFile) { toast('Select a document first', 'error'); return; }
 
   const task   = $('task-select')?.value || '1';
   const course = $('course-input')?.value?.trim() || '';
@@ -343,11 +353,6 @@ async function runExtraction() {
     return;
   }
 
-  if (!STATE.serverOnline && !(await checkServer(true))) {
-    toast('Start the extraction service before processing this document', 'error');
-    return;
-  }
-
   // Show progress
   $('extract-progress').style.display = 'block';
   $('btn-run').disabled = true;
@@ -358,7 +363,7 @@ async function runExtraction() {
   const timeout = setTimeout(() => { timedOut = true; controller.abort(); }, 120000);
   $('section-extract').dataset.busy = 'true';
   $('btn-cancel-extraction').hidden = false;
-  setProgress(5, mode === 'online' ? 'Contacting Cloud AI...' : 'Uploading PDF to engine...');
+  setProgress(5, mode === 'online' ? 'Preparing cloud-assisted extraction...' : 'Preparing local document extraction...');
 
   try {
     const form = new FormData();
@@ -375,11 +380,15 @@ async function runExtraction() {
     } else if (STATE.hintsData) {
       hintsData = { ...STATE.hintsData };
     }
-    if (task === '2' && STATE.task1Result?.courses?.length) {
+    if ((task === '2' || (mode === 'online' && onlineReviewOptions())) && STATE.task1Result?.courses?.length) {
       hintsData = hintsData || {};
       if (!Array.isArray(hintsData.courses) || !hintsData.courses.length) {
         hintsData.courses = STATE.task1Result.courses;
       }
+    }
+    if (mode === 'online') {
+      const review = onlineReviewOptions();
+      if (review) hintsData = { ...hintsData, online_review: review };
     }
     if (hintsData) form.append('hints', JSON.stringify(hintsData));
 
@@ -390,34 +399,7 @@ async function runExtraction() {
     }
 
     setProgress(20, mode === 'online' ? 'Running Cloud AI Extraction...' : 'Sending to offline engine...');
-    const resp = await fetch(STATE.serverUrl + '/api/extract', {
-      method: 'POST', body: form,
-      signal: controller.signal,
-    });
-
-    setProgress(70, 'Processing response...');
-    let data = await resp.json().catch(() => ({}));
-
-    if (!resp.ok || data.error) {
-      const requestError = data.error || `Extraction failed with HTTP ${resp.status}`;
-      if (mode === 'online' && SYLEX_CLOUD_AUTOFALLBACK && resp.status >= 500) {
-        toast(`Cloud processing failed. Retrying with the local engine: ${requestError}`, 'error');
-        setProgress(30, 'Running local offline engine...');
-        form.set('mode', 'offline');
-        const fallbackResp = await fetch(STATE.serverUrl + '/api/extract', {
-          method: 'POST', body: form,
-          signal: controller.signal,
-        });
-        data = await fallbackResp.json().catch(() => ({}));
-        if (!fallbackResp.ok || data.error) {
-          toast(data.error || `Extraction failed with HTTP ${fallbackResp.status}`, 'error');
-          return;
-        }
-      } else {
-        toast(requestError, 'error');
-        return;
-      }
-    }
+    const data = await window.SylexOffline.extract(form, { signal: controller.signal });
 
     setProgress(100, 'Complete!');
     STATE.dataSource = 'document';
@@ -502,6 +484,41 @@ function renderAll() {
     sourceBadge.className = `data-source-badge ${STATE.dataSource === 'sample' ? 'is-sample' : 'is-document'}`;
   }
   renderStatsBar();
+  const source = STATE.task2Result?._source || STATE.task1Result?._source;
+  const quality = $('source-quality');
+  if (quality) {
+    quality.hidden = !source;
+    if (source) {
+      const processing = STATE.task2Result?._processing || STATE.task1Result?._processing;
+      quality.textContent = `${processing?.cached ? 'Saved extraction · ' : ''}${source.page_count} source page(s), ${source.ocr_pages?.length || 0} read with OCR. ${source.review_pages?.length ? `Review pages ${source.review_pages.join(', ')} against the original. ` : ''}${(source.warnings || []).join(' ')} ${STATE.task2Result?._quality?.note || 'Check the extracted catalog against the original document.'}`;
+    }
+  }
+  const review = STATE.task2Result?._online || STATE.task1Result?._online;
+  const reviewPanel = $('online-review');
+  if (reviewPanel) {
+    reviewPanel.hidden = !review;
+    if (review) {
+      $('online-review-summary').textContent = `Cloud review: ${review.status} · ${review.reviewed_pages.length} page(s) reviewed · ${review.accepted_proposals} source-checked addition(s)`;
+      const paragraphs = [
+        `Models used: ${review.models.join(', ') || 'None — local fallback'}`,
+        `Reviewed pages: ${review.reviewed_pages.join(', ') || 'None'}`,
+        `Not fully reviewed: ${review.unreviewed_pages.join(', ') || 'None'}`,
+        `Outside the selected review range: ${(review.outside_review_pages || []).join(', ') || 'None'}`,
+        `Vision pages: ${review.vision_pages.join(', ') || 'None'}. Check vision transcripts against the original image.`,
+        `Rejected proposals: ${review.rejected_proposals}. Conflicting proposals: ${review.conflicts}.`,
+        ...review.warnings,
+      ];
+      const content = $('online-review-content');
+      content.replaceChildren(...paragraphs.map(text => { const p = document.createElement('p'); p.textContent = text; return p; }));
+      const evidence = STATE.task2Result?._evidence || STATE.task1Result?._evidence || [];
+      if (evidence.length) {
+        const heading = document.createElement('h3'); heading.textContent = 'Source excerpts supporting cloud proposals'; content.append(heading);
+        for (const item of evidence.slice(0, 80)) {
+          const p = document.createElement('p'); p.textContent = `Page ${item.page} · ${item.field} · ${item.source_method}: ${item.quote}`; content.append(p);
+        }
+      }
+    }
+  }
   renderCourseCards();
   renderTask2();
   renderCurriculumAudit();
@@ -637,7 +654,7 @@ async function loadTask2ForCourse(course) {
   const abortCtrl = new AbortController();
   STATE.activeTask2AbortController = abortCtrl;
 
-  if (STATE.pdfFile && STATE.serverOnline) {
+  if (STATE.pdfFile) {
     switchResultsTab('deep');
     const metaCard = $('meta-card');
     if (metaCard) {
@@ -658,7 +675,7 @@ async function loadTask2ForCourse(course) {
 
     const timeoutId = setTimeout(() => {
       try { abortCtrl.abort(); } catch(_) {}
-    }, 60000);
+    }, 120000);
 
     try {
       const form = new FormData();
@@ -670,6 +687,10 @@ async function loadTask2ForCourse(course) {
         target: { code: course.code, title: course.title, page: course.page },
         courses: STATE.task1Result?.courses || []
       };
+      if (STATE.extractionMode === 'online') {
+        const review = onlineReviewOptions();
+        if (review) hintsPayload.online_review = review;
+      }
       form.append('hints', JSON.stringify(hintsPayload));
 
       form.append('mode', STATE.extractionMode || 'offline');
@@ -677,19 +698,9 @@ async function loadTask2ForCourse(course) {
         form.append('provider', SYLEX_CLOUD_PROVIDER);
         form.append('model', getCloudModel());
       }
-      const resp = await fetch(STATE.serverUrl + '/api/extract', {
-        method: 'POST', body: form,
-        signal: abortCtrl.signal,
-      });
+      const data = await window.SylexOffline.extract(form, { signal: abortCtrl.signal });
       clearTimeout(timeoutId);
-      const data = await resp.json().catch(() => ({}));
       if (STATE.activeTask2AbortController !== abortCtrl) return;
-      if (!resp.ok || data.error) {
-        const message = data.error || `Extraction failed with HTTP ${resp.status}`;
-        toast(message, 'error');
-        renderTask2Error(course, message);
-        return;
-      }
       STATE.task2Result = data;
       // Cache both by code and title for instant subsequent clicks
       if (cacheKey) STATE.courseCache[cacheKey] = data;
@@ -698,7 +709,7 @@ async function loadTask2ForCourse(course) {
 
       renderAll();
       switchResultsTab('deep');
-      toast(`Extracted ${codeOrTitle}`, 'success');
+      toast(data._processing?.reason || `Extracted ${codeOrTitle}`, 'success');
       const ctx = { task1: STATE.task1Result, task2: STATE.task2Result };
       CHAT.context = ctx;
       updateContextPanel(ctx);

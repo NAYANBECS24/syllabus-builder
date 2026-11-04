@@ -50,7 +50,7 @@ SYLEX detects K1–K6, BT1–BT6, and explicit words. Falls back to verb lexicon
   accuracy: `To maximize accuracy:<br/>
 <ul>
 <li><b>Native PDF</b> → highest accuracy (pdfplumber extracts exact text + geometry)</li>
-<li><b>Scanned PDF</b> → install <code>pytesseract</code> + Tesseract OCR for text recovery</li>
+<li><b>Scanned PDF</b> → local Tesseract OCR recovers text; review OCR warnings against the scan</li>
 <li><b>Difficult boundaries</b> → use <code>--hints</code> to specify exact page ranges</li>
 <li><b>Multiple runs</b> → output is deterministic (identical every run)</li>
 <li><b>Debugging</b> → <code>python sylex.py --pdf f.pdf --debug</code> shows grammar, signals, and page range</li>
@@ -278,6 +278,12 @@ function analyzAndSuggest(ctx) {
   const cards = [];
   const d1 = ctx?.task1;
   const d2 = ctx?.task2;
+  const source = d2?._source || d1?._source;
+  if (source) {
+    cards.push({ type: source.review_pages?.length ? 'warn' : 'ok', title: 'Source readability',
+      body: `${escHtml(source.page_count)} page(s) · ${escHtml(source.ocr_pages?.length || 0)} OCR page(s). ${source.review_pages?.length ? `Review pages: ${escHtml(source.review_pages.join(', '))}.` : 'Text was read directly from the document.'}` });
+    for (const warning of source.warnings || []) cards.push({ type: 'warn', title: 'Document review', body: escHtml(warning) });
+  }
 
   if (d1) {
     if (d1.course_count === 0) {
@@ -318,7 +324,7 @@ function analyzAndSuggest(ctx) {
 
     if (ne.length === 0) {
       cards.push({type:'ok', title:'not_extracted is clean',
-        body:'All fields were resolved. Zero honest failures.'});
+        body:'No parser gaps were reported. Verify the result against the source; this is not a guarantee of completeness.'});
     } else {
       ne.forEach(item => {
         cards.push({type:'warn', title:'Field not extracted',
@@ -329,7 +335,7 @@ function analyzAndSuggest(ctx) {
     // Scanned page warning
     if (d2._debug && d2._debug.scanned_pages && d2._debug.scanned_pages.length) {
       cards.push({type:'error', title:'Scanned pages detected',
-        body:`Pages ${d2._debug.scanned_pages.join(', ')} appear image-only. Install <code>pytesseract</code> for OCR support.`});
+        body:`Pages ${d2._debug.scanned_pages.join(', ')} have little readable text. Check local Tesseract availability and the scan quality.`});
     }
   }
 
@@ -549,7 +555,7 @@ function formatSyllabusContext(c) {
     parts.push(`Document: ${d1.document} (${d1.course_count || (d1.courses || []).length} courses detected)`);
   }
   if (d2 && d2.course) {
-    parts.push(`Course: ${d2.course.code || ''} - ${d2.course.title || ''} (Credits: ${d2.course.credits || 4}, Category: ${d2.course.category || 'Core'}, Hours: ${d2.course.lecture || 3}-${d2.course.tutorial || 0}-${d2.course.practical || 0})`);
+    parts.push(`Course: ${d2.course.code || ''} - ${d2.course.title || ''} (Credits: ${d2.course.credits ?? 'not printed'}, Category: ${d2.course.category || 'not printed'}, Hours: ${d2.course.lecture ?? '?'}-${d2.course.tutorial ?? '?'}-${d2.course.practical ?? '?'})`);
     if (d2.units && d2.units.length) {
       const uLines = d2.units.map(u => {
         const topList = (u.topics || []).map(t => `${t.text} [Bloom: ${t.bloom || 'understand'}]`).join(', ');
@@ -612,7 +618,7 @@ async function sendChat() {
   const onlineEndpoint = '';
 
   // If Online Mode is active, query server /api/chat
-  if (isOnline) {
+  if (isOnline && navigator.onLine !== false) {
     try {
       const payload = {
         message: msg,
@@ -678,6 +684,8 @@ function sendQuick(msg) {
 }
 
 function respond(q) {
+  const localAnswer = window.SylexLocalAssistant?.answer(q, CHAT.context || { task1: window.STATE?.task1Result, task2: window.STATE?.task2Result });
+  if (localAnswer) return localAnswer;
   // Intent pattern matching
   for (const intent of INTENTS) {
     if (intent.patterns.some(p => p.test(q))) {

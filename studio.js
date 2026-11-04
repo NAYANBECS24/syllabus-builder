@@ -122,7 +122,7 @@
       [[data.courses, 'courses'], [data.analyzed, 'analyzed'], [data.topics, 'topics']].forEach(([value, label]) => numbers.append(node('span', '', `${value} ${label}`)));
       const progress = node('div', 'studio-project-progress');
       const fill = node('span'); fill.style.width = `${Math.min(100, data.courses ? data.analyzed / data.courses * 100 : 0)}%`; progress.append(fill);
-      body.append(numbers, progress, node('p', 'studio-project-date', `Updated ${date(project.updatedAt)} · ${project.pdf ? 'Source PDF saved' : 'Analysis data only'}`));
+      body.append(numbers, progress, node('p', 'studio-project-date', `Updated ${date(project.updatedAt)} · ${project.pdf ? 'Source document saved' : 'Analysis data only'}`));
       if (project.notes) body.append(node('p', 'studio-project-notes', project.notes));
       const actions = node('div', 'studio-project-actions');
       actions.append(button('Open project ↗', () => openProject(project.id), 'btn btn-primary'), button('Notes', () => editProject(project)), button('Export', () => exportProject(project)));
@@ -130,7 +130,7 @@
       more.append(node('summary', '', 'More actions'));
       const menu = node('div');
       menu.append(button('Create a copy', () => duplicate(project)), button('Delete project', () => remove(project), 'btn studio-delete-button'));
-      if (!project.pdf) menu.prepend(button('Attach source PDF', () => attachSource(project)));
+      if (!project.pdf) menu.prepend(button('Attach source document', () => attachSource(project)));
       more.append(menu); body.append(actions, more); card.append(cover, body);
       return card;
     }));
@@ -149,7 +149,7 @@
       activeId = id;
       plans = structuredClone(project.plans || {});
       const data = project.snapshot;
-      const file = project.pdf ? new File([project.pdf], data.documentName, { type: 'application/pdf' }) : null;
+      const file = project.pdf ? new File([project.pdf], data.documentName, { type: project.pdf.type || 'application/octet-stream' }) : null;
       Object.assign(window.STATE, { pdfFile: file, task1Result: structuredClone(data.task1), task2Result: structuredClone(data.courseDetails.find(item => core.key(item.course) === data.activeCourse) || data.courseDetails[0] || null), dataSource: data.source, courseCache: {}, hintsData: null });
       data.courseDetails.forEach(item => {
         [item.course.code, item.course.title].filter(Boolean).forEach(value => { window.STATE.courseCache[String(value).trim().toUpperCase()] = structuredClone(item); });
@@ -211,16 +211,22 @@
     download({ format: 'sylex-project', version: 1, exportedAt: new Date().toISOString(), name: project.name, notes: project.notes, snapshot: project.snapshot, plans: project.plans || {} }, `${project.name}.sylex.json`);
   }
   function attachSource(project) {
-    const picker = document.createElement('input'); picker.type = 'file'; picker.accept = 'application/pdf,.pdf';
+    const picker = document.createElement('input'); picker.type = 'file'; picker.accept = '.pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff';
     picker.addEventListener('change', async () => {
       try {
         const file = picker.files[0]; if (!file) return;
-        if (file.size > 50 * 1024 * 1024 || !file.size) throw new Error('Choose a source PDF between 1 byte and 50 MB.');
-        if (!(await file.slice(0, 5).text()).startsWith('%PDF-')) throw new Error('This file does not contain a valid PDF header.');
+        if (file.size > 50 * 1024 * 1024 || !file.size) throw new Error('Choose a source document between 1 byte and 50 MB.');
+        if (!/\.(pdf|docx|txt|md|png|jpe?g|tiff?)$/i.test(file.name)) throw new Error('Choose a supported syllabus document.');
+        const expected = project.snapshot.task1?._source?.sha256 || project.snapshot.courseDetails?.find(item => item._source?.sha256)?._source.sha256;
+        if (expected) {
+          const digest = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+          const actual = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, '0')).join('');
+          if (actual !== expected) throw new Error('This is a different source document. Extract it as a new project to keep source evidence accurate.');
+        }
         if (file.name !== project.snapshot.documentName && !confirm(`This project references “${project.snapshot.documentName}”. Attach “${file.name}” as its source? Existing extracted results will be kept.`)) return;
         await update(project.id, current => ({ ...current, pdf: file, snapshot: { ...current.snapshot, documentName: file.name } }));
         if (activeId === project.id) await openProject(project.id);
-        notify('Source PDF attached to the saved project');
+        notify('Source document attached to the saved project');
       } catch (error) { notify(error.message, 'error'); }
     });
     picker.click();

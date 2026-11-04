@@ -11,13 +11,13 @@ import pymupdf
 import sylex_server as server
 
 
-def multipart(fields, file_field=None, pdf=None):
+def multipart(fields, file_field=None, pdf=None, filename='test-syllabus.pdf'):
     boundary = 'sylex-integration-boundary'
     parts = []
     for name, value in fields.items():
         parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{name}"\r\n\r\n{value}\r\n'.encode())
     if file_field:
-        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; filename="test-syllabus.pdf"\r\nContent-Type: application/pdf\r\n\r\n'.encode() + pdf + b'\r\n')
+        parts.append(f'--{boundary}\r\nContent-Disposition: form-data; name="{file_field}"; filename="{filename}"\r\nContent-Type: application/octet-stream\r\n\r\n'.encode() + pdf + b'\r\n')
     parts.append(f'--{boundary}--\r\n'.encode())
     return b''.join(parts), f'multipart/form-data; boundary={boundary}'
 
@@ -116,6 +116,51 @@ class APIWorkflowTests(unittest.TestCase):
         self.assertEqual(self.request('/api/chat', {'message': 'hello', 'history': ['invalid']})[0], 400)
         self.assertEqual(self.request('/api/book-discovery', {'isbn': '9780262046306'})[0], 400)
         self.assertEqual(self.request('/api/extract', b'not a pdf', 'application/pdf')[0], 422)
+
+    def test_offline_chat_never_calls_cloud(self):
+        with patch.object(server.Handler, '_handle_chat_request', side_effect=AssertionError('Cloud called')):
+            status, data = self.request('/api/chat', {'message': 'List courses', 'mode': 'offline', 'context': {}})
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data['model'], 'local-offline-engine')
+
+    def test_text_upload_keeps_uncoded_identity_and_source_report(self):
+        content = b'Course Title: Introduction to Ecology\nCourse Objectives:\nStudy habitats.\nUNIT I FORESTS\nBiodiversity and forest habitats.\nCredits: 2.5'
+        payload, mime = multipart({'mode': 'offline', 'course': 'Introduction to Ecology'}, 'pdf', content, 'ecology.txt')
+        with patch.object(server.Handler, '_run_online', side_effect=AssertionError('Cloud called')):
+            status, result = self.request('/api/extract', payload, mime)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result['course']['code'], '')
+        self.assertEqual(result['_source']['format'], 'txt')
+        self.assertTrue(result['_source']['sha256'])
+        self.assertEqual(result['course']['credits'], 2.5)
+
+    def test_online_outage_falls_back_and_is_not_cached_as_cloud_success(self):
+        server.CACHE.clear()
+        payload, mime = multipart({'mode': 'online', 'course': 'CS23301'}, 'pdf', self.pdf)
+        with patch.object(server.Handler, '_run_online', side_effect=TimeoutError('simulated outage')) as cloud:
+            for _ in range(2):
+                status, result = self.request('/api/extract', payload, mime)
+                self.assertEqual(status, 200, result)
+                self.assertEqual(result['_processing']['used_mode'], 'offline')
+                self.assertTrue(result['_processing']['fallback'])
+                self.assertTrue(result['units'])
+            self.assertEqual(cloud.call_count, 2)
+
+    def test_online_request_reviews_even_an_already_parsed_course(self):
+        server.CACHE.clear()
+        payload, mime = multipart({'mode': 'online', 'course': 'CS23301'}, 'pdf', self.pdf)
+        with patch.object(server, 'DEFAULT_NVIDIA_API_KEY', 'test-only'), patch('cloud_models.CloudModels.complete', return_value=({'courses': []}, 'test-model')) as cloud:
+            status, result = self.request('/api/extract', payload, mime)
+        self.assertGreater(cloud.call_count, 0)
+        self.assertEqual(status, 200, result)
+        self.assertEqual(result['_processing']['used_mode'], 'online')
+        self.assertEqual(result['_processing']['requested_mode'], 'online')
+        self.assertEqual(result['_online']['reviewed_pages'], [1])
+
+    def test_invalid_hint_shapes_are_client_errors(self):
+        for hints in [{'courses': 'invalid'}, {'courses': [3]}, {'target': []}, {'courses': [{'page': -1}]}, {'online_review': []}, {'online_review': {'start_page': 8, 'end_page': 2}}]:
+            payload, mime = multipart({'mode': 'offline', 'hints': json.dumps(hints)}, 'pdf', self.pdf)
+            self.assertEqual(self.request('/api/extract', payload, mime)[0], 400)
 
 
 class CloudReliabilityTests(unittest.TestCase):

@@ -2,6 +2,10 @@
 
 SYLEX is a local-first document workspace. Run `py -3.12 run.py` to start the Python API and open the browser. The existing JavaScript application is retained so PDF extraction, exports, and book workflows share the same data without a second UI stack.
 
+See [OFFLINE.md](OFFLINE.md) for the expanded offline architecture: document adapters, bounded OCR, persistent page caching, a versioned browser shell, exact-request result recovery and local source-text retrieval. The same reader handles PDF, DOCX, text and image syllabi. Hosted operation remains available with explicit actual-mode reporting.
+
+See [ONLINE.md](ONLINE.md) for the cloud review pipeline. `cloud_models.py` bounds provider requests and response parsing; `online_pipeline.py` selects source pages, recovers unreadable PDFs through vision, validates model proposals and merges supported additions with the local baseline. Results expose reviewed/unreviewed pages, source excerpts, conflicts and fallback status.
+
 ## Boundaries
 
 - `app.js`: navigation, document session, extraction, evidence views, and exports. It emits document and result events for connected tools.
@@ -20,7 +24,7 @@ SYLEX is a local-first document workspace. Run `py -3.12 run.py` to start the Py
 
 ## Request and document lifecycle
 
-Document uploads remain in memory in the browser until sent to the selected API. Server upload limits and PDF validation precede processing. Extraction exposes requested and actual processing modes in `_processing`; cloud failure may use local extraction and is reported in the UI. The catalog extraction task uses deterministic local parsing even in cloud-assisted mode.
+Document uploads remain in memory in the browser until sent to the selected API. Server upload limits and format validation precede processing. Extraction exposes requested and actual processing modes in `_processing`; cloud failure preserves local extraction and is reported in the UI. Both catalog and detail tasks use page-based cloud review in online mode, retaining the whole-document local baseline and reporting incomplete review coverage.
 
 Extraction has a cancel control and a two-minute browser deadline. Cancellation stops the browser waiting; an already-running server operation may finish. Book search, discovery, and chat protect state with controller or request identity checks so an older response cannot overwrite a newer session. Model fallback attempts share a bounded time budget.
 

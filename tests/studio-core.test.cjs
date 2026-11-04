@@ -71,3 +71,13 @@ test('portable exports restore plan progress from verified source topics', () =>
   input.plans[id].signature = 'stale';
   assert.deepEqual(core.validateExport(input).plans, {});
 });
+
+test('cloud review evidence survives export and malformed metadata is rejected', () => {
+  const detail = course();
+  detail._online = {status:'partial',reviewed_pages:[1],unreviewed_pages:[],vision_pages:[],outside_review_pages:[],models:['fixture'],warnings:['Review original'],accepted_proposals:1,rejected_proposals:0,conflicts:0};
+  detail._evidence = [{page:1,field:'units',quote:'Binary search trees',source_method:'native'}];
+  const input = {format:'sylex-project',version:1,snapshot:snapshot([detail])};
+  assert.equal(core.validateExport(input).snapshot.courseDetails[0]._evidence[0].quote,'Binary search trees');
+  detail._online.reviewed_pages='invalid';
+  assert.throws(()=>core.validateExport(input),/cloud review metadata/);
+});

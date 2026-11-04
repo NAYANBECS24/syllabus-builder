@@ -23,6 +23,7 @@ from pathlib import Path
 from http.server import HTTPServer, ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse, parse_qs
 from typing import Dict, Any, Optional, List, Tuple
+from document_ingest import ENGINE_VERSION, FORMATS, ocr_capabilities, validate_document
 
 PORT      = 7823
 HOST      = os.environ.get("SYLEX_HOST", "127.0.0.1")
@@ -62,6 +63,8 @@ STATIC_FILES = {
     "book-finder.js", "demo-data.js", "chat.js", "chat.css", "cinematic.js",
     "workspace.js", "workspace.css", "api-client.js",
     "studio.js", "studio.css", "studio-core.js", "studio-store.js",
+    "offline.js", "service-worker.js",
+    "local-assistant.js",
 }
 
 
@@ -456,15 +459,19 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({
                 "status":  "online",
                 "python":  platform.python_version(),
-                "version": "3.0",
+                "version": "5.0",
                 "offline": True,
                 "platform": "vercel-serverless" if os.environ.get("VERCEL") else "local",
                 "capabilities": {
+                    "document_formats": sorted(FORMATS),
+                    "engine": ENGINE_VERSION,
+                    "ocr": {key: value for key, value in ocr_capabilities().items() if key not in {"executable", "tessdata"}},
                     "pdf": {
                         "pymupdf": bool(importlib.util.find_spec("pymupdf") or importlib.util.find_spec("fitz")),
                         "pdfplumber": bool(importlib.util.find_spec("pdfplumber")),
                     },
                     "cloud_configured": bool(DEFAULT_NVIDIA_API_KEY),
+                    "online_review": {"page_evidence": True, "max_text_chunks": 6, "max_vision_pages": 3, "page_ranges": True},
                     "google_books_configured": bool(DEFAULT_GOOGLE_BOOKS_API_KEY),
                     "catalog_providers": 6,
                     "note": "Configuration only; use connection checks to verify upstream availability.",
@@ -511,6 +518,8 @@ class Handler(BaseHTTPRequestHandler):
             CACHE.clear()
             BOOK_TEXT_CACHE.clear()
             BOOK_DISCOVERY_CACHE.clear()
+            import offline_cache
+            offline_cache.clear()
             self.send_json({"status": "ok", "cleared": True})
             return
 
@@ -526,6 +535,9 @@ class Handler(BaseHTTPRequestHandler):
                 model = req_data.get("model", "")
                 api_key = req_data.get("api_key", "")
                 endpoint = req_data.get("endpoint", "")
+                mode = req_data.get("mode", "online")
+                if mode not in {"offline", "online"}:
+                    raise RequestError("mode must be offline or online")
 
                 if not isinstance(user_message, str) or not user_message.strip():
                     raise RequestError("Message is required")
@@ -547,20 +559,23 @@ class Handler(BaseHTTPRequestHandler):
                 endpoint = endpoint.strip()
                 if provider not in {"nvidia", "gemini", "openai", "custom"}:
                     raise RequestError(f"Unknown provider: {provider}")
-                if endpoint:
+                if endpoint and mode != "offline":
                     endpoint = _validated_endpoint(endpoint)
                     if provider == "nvidia" and not api_key:
                         raise RequestError("A request-specific API key is required with a custom NVIDIA endpoint")
 
-                reply, model_used = self._handle_chat_request(
-                    user_message=user_message,
-                    history=history,
-                    context=context,
-                    provider=provider,
-                    model=model,
-                    api_key=api_key,
-                    endpoint=endpoint
-                )
+                if mode == "offline":
+                    reply, model_used = self._local_assistant_reply(user_message, context.get('task1') or {}, context.get('task2') or {}), "local-offline-engine"
+                else:
+                    reply, model_used = self._handle_chat_request(
+                        user_message=user_message,
+                        history=history,
+                        context=context,
+                        provider=provider,
+                        model=model,
+                        api_key=api_key,
+                        endpoint=endpoint
+                    )
                 self.send_json({
                     "status": "ok",
                     "reply": reply,
@@ -857,13 +872,15 @@ class Handler(BaseHTTPRequestHandler):
 
                 if not pdf_bytes:
                     raise RequestError("No PDF received or file is empty")
-                if b"%PDF-" not in pdf_bytes[:1024]:
-                    raise RequestError("Uploaded file is not a valid PDF", 422)
+                try:
+                    document_extension = validate_document(pdf_bytes, pdf_filename)
+                except Exception as exc:
+                    raise RequestError(str(exc), 422) from exc
                 if mode not in {"offline", "online"}:
                     raise RequestError("mode must be 'offline' or 'online'")
                 if provider not in {"nvidia", "gemini", "openai", "custom"}:
                     raise RequestError(f"Unknown provider: {provider}")
-                if endpoint:
+                if endpoint and mode != "offline":
                     endpoint = _validated_endpoint(endpoint)
                     if provider == "nvidia" and not api_key:
                         raise RequestError("A request-specific API key is required with a custom NVIDIA endpoint")
@@ -874,6 +891,24 @@ class Handler(BaseHTTPRequestHandler):
                         raise RequestError(f"Invalid hints JSON: {exc}") from exc
                     if not isinstance(parsed_hints, dict):
                         raise RequestError("hints must be a JSON object")
+                    if 'courses' in parsed_hints:
+                        if not isinstance(parsed_hints['courses'], list) or len(parsed_hints['courses']) > 3000:
+                            raise RequestError('hints.courses must be an array of at most 3000 courses')
+                        for item in parsed_hints['courses']:
+                            if not isinstance(item, dict) or not all(isinstance(item.get(k, ''), str) for k in ('code', 'title')):
+                                raise RequestError('Each hinted course must have text code/title fields')
+                            for field in ('page', 'start_page', 'end_page'):
+                                if field in item and (isinstance(item[field], bool) or not isinstance(item[field], int) or item[field] < 1):
+                                    raise RequestError('Hinted page numbers must be positive integers')
+                    if 'target' in parsed_hints and not isinstance(parsed_hints['target'], dict):
+                        raise RequestError('hints.target must be an object')
+                    if 'online_review' in parsed_hints:
+                        review = parsed_hints['online_review']
+                        if not isinstance(review, dict):
+                            raise RequestError('hints.online_review must be an object')
+                        start, end = review.get('start_page', 1), review.get('end_page')
+                        if type(start) is not int or not 1 <= start <= 1500 or (end is not None and (type(end) is not int or not start <= end <= 1500)):
+                            raise RequestError('Cloud review page range must be ordered, positive page numbers (maximum 1500)')
 
                 # In-memory SHA-256 cache check
                 cache_hash = hashlib.sha256(pdf_bytes)
@@ -886,6 +921,8 @@ class Handler(BaseHTTPRequestHandler):
                     "debug": debug_flag,
                     "endpoint": endpoint,
                     "hints": hints_json or "",
+                    "engine": ENGINE_VERSION,
+                    "credential_scope": hashlib.sha256((api_key or (DEFAULT_NVIDIA_API_KEY if provider == 'nvidia' and not endpoint else '')).encode()).hexdigest(),
                 }, sort_keys=True).encode("utf-8"))
                 cache_key = cache_hash.hexdigest()
 
@@ -901,19 +938,14 @@ class Handler(BaseHTTPRequestHandler):
                     return
 
                 # Write PDF to temp file
-                with tempfile.NamedTemporaryFile(suffix=".pdf", delete=False) as tf:
+                with tempfile.NamedTemporaryFile(suffix=document_extension, delete=False) as tf:
                     tf.write(pdf_bytes)
                     tmp_pdf = tf.name
 
                 try:
                     if mode == "online":
                         try:
-                            if not course:
-                                # Section 33.10: Task 1 document-wide structure discovery uses rules-first detection
-                                # for 100% course recall without cloud token truncation or timeouts
-                                result = self._run_sylex(tmp_pdf, course, hints_json, debug_flag)
-                            else:
-                                result = self._run_online(tmp_pdf, course, provider, model, api_key, endpoint, hints_json)
+                            result = self._run_online(tmp_pdf, course, provider, model, api_key, endpoint, hints_json)
                         except Exception as online_err:
                             print(f"[Online AI Error] {online_err} — falling back to Offline Engine...")
                             result = self._run_sylex(tmp_pdf, course, hints_json, debug_flag)
@@ -932,24 +964,31 @@ class Handler(BaseHTTPRequestHandler):
                 if result and isinstance(result, dict) and "error" not in result:
                     debug_info = result.get("_debug")
                     reasoning_info = result.get("_reasoning_summary")
+                    diagnostics = {key: result[key] for key in ("_source", "_quality", "_online", "_evidence") if key in result}
+                    processing = result.get('_processing')
                     if course:
                         result = self._normalize_task2_schema(result, course)
                     else:
                         result = self._normalize_task1_schema(result, pdf_filename or "document.pdf")
                     if debug_info: result["_debug"] = debug_info
                     if reasoning_info: result["_reasoning_summary"] = reasoning_info
+                    result.update(diagnostics)
                     fallback = bool((debug_info or {}).get("fallback_mode") == "offline")
-                    result["_processing"] = {
+                    grounded = (debug_info or {}).get("engine") == "grounded-offline"
+                    local = mode == "offline" or fallback or grounded
+                    result["_processing"] = processing or {
                         "requested_mode": mode,
-                        "used_mode": "offline" if mode == "offline" or not course or fallback else "online",
+                        "used_mode": "offline" if local else "online",
                         "fallback": fallback,
-                        "reason": "Catalog discovery uses the local rules engine" if mode == "online" and not course else (
-                            "Cloud unavailable; processed with the local engine" if fallback else ""
+                        "reason": (
+                            "Cloud unavailable; processed with the local engine" if fallback else (
+                                "Processed by the local document engine; no cloud request was needed" if local else ""
+                            )
                         ),
                     }
 
                 # Cache successful extraction. Request data is never stored as shared user context.
-                if result and not (isinstance(result, dict) and "error" in result):
+                if result and not (isinstance(result, dict) and ("error" in result or result.get("_processing", {}).get("fallback") or result.get('_online', {}).get('status') == 'partial')):
                     CACHE.set(cache_key, copy.deepcopy(result))
 
                 if isinstance(result, dict) and result.get("error"):
@@ -1035,13 +1074,20 @@ class Handler(BaseHTTPRequestHandler):
                 return None
 
         # Normalize Course Front Matter
-        c_code = str(course_obj.get("code") or course_id).strip()
+        c_code = str(course_obj.get("code") or "").strip()
         c_title = str(course_obj.get("title") or "").strip()
         c_cat = str(course_obj.get("category") or "").strip()
         c_lec = _parse_int_or_none(course_obj.get("lecture"))
         c_tut = _parse_int_or_none(course_obj.get("tutorial"))
         c_prac = _parse_int_or_none(course_obj.get("practical"))
-        c_cred = _parse_int_or_none(course_obj.get("credits"))
+        try:
+            c_cred = float(course_obj.get("credits"))
+            if not math.isfinite(c_cred) or c_cred < 0:
+                c_cred = None
+            elif c_cred.is_integer():
+                c_cred = int(c_cred)
+        except (ValueError, TypeError):
+            c_cred = None
 
         pages_raw = course_obj.get("pages")
         c_pages = []
@@ -1279,7 +1325,7 @@ class Handler(BaseHTTPRequestHandler):
         debug_flag  = False
         mode        = "offline"
         provider    = "nvidia"
-        model       = "nvidia/nemotron-3.5-bolt-e4b"
+        model       = ""
         api_key     = ""
         endpoint    = ""
 
@@ -2839,219 +2885,12 @@ class Handler(BaseHTTPRequestHandler):
         return payload
 
     def _run_online(self, pdf_path: str, course: str = None, provider: str = "nvidia",
-                    model: str = "nvidia/nemotron-3-super-120b-a12b", api_key: str = "",
-                    endpoint: str = "", hints_json: str = None) -> Dict:
-        """Execute online cloud LLM extraction (NVIDIA Nemotron / Gemini / OpenAI / Custom) with deterministic grounding."""
-        import urllib.request, json
-
-        offline_res = None
-        target_code = course or ""
-        target_title = ""
-        sample_text = ""
-
-        # Grounding: Use deterministic engine to resolve exact course boundaries and baseline
-        if course:
-            try:
-                offline_res = self._run_sylex(pdf_path, course, hints_json, debug=False)
-                if offline_res and offline_res.get("course") is None:
-                    # Deterministic missing course contract (Section 31.1)
-                    return offline_res
-                if offline_res and offline_res.get("course"):
-                    # Fast Grounded Path: Deterministic extraction already extracted complete units & outcomes!
-                    # Return immediately with 100% precision in ~1.5s, avoiding ungrounded cloud LLM delays/timeouts.
-                    if len(offline_res.get("units", [])) >= 1:
-                        if "_debug" not in offline_res:
-                            offline_res["_debug"] = {}
-                        offline_res["_debug"]["engine"] = "grounded-offline"
-                        offline_res["_debug"]["provider"] = provider
-                        return offline_res
-
-                    c_info = offline_res["course"]
-                    target_code = c_info.get("code") or course
-                    target_title = c_info.get("title") or ""
-                    pages = c_info.get("pages") or [1]
-                    sp, ep = min(pages), max(pages)
-                    try:
-                        import sylex
-                        reader = sylex.PDFReader(pdf_path)
-                        sample_text = reader.range_text(sp, ep)
-                    except Exception:
-                        pass
-            except Exception as gr_err:
-                print(f"[Online Grounding Note: {gr_err}]")
-
-        if not sample_text:
-            try:
-                fitz = _pymupdf_module()
-                doc = fitz.open(pdf_path)
-                pages = [pg.get_text() for pg in doc]
-                doc_text = "\n--- PAGE BREAK ---\n".join(pages)
-                doc.close()
-                sample_text = doc_text[:35000]
-            except Exception:
-                try:
-                    import sylex
-                    reader = sylex.PDFReader(pdf_path)
-                    sample_text = reader.full_text()[:35000]
-                except Exception:
-                    pass
-
-        if not sample_text:
-            if offline_res: return offline_res
-            raise ValueError("Could not extract text from PDF for online analysis")
-
-        if course:
-            system_prompt = (
-                f"You are SYLEX Universal Syllabus Extractor. Extract course details for '{target_code} {target_title}'.\n"
-                "Return PURE JSON adhering strictly to this schema:\n"
-                "{\n"
-                '  "course": {"code": "...", "title": "...", "category": "...", "lecture": 3, "tutorial": 0, "practical": 0, "credits": 3, "pages": [1, 2]},\n'
-                '  "units": [{"number": 1, "title": "...", "hours": 9, "text": "...", "topics": [{"id": "u1t1", "text": "...", "bloom": "understand", "bloom_source": "inferred"}]}],\n'
-                '  "course_outcomes": [{"id": "CO1", "text": "...", "bloom": "understand", "bloom_source": "printed"}],\n'
-                '  "programme_outcomes": [{"id": "PO1", "text": "..."}],\n'
-                '  "co_po_matrix": {"CO1": {"PO1": "S"}},\n'
-                '  "books": [{"kind": "text", "title": "...", "author": "...", "publisher": "...", "edition": "...", "year": 2020}],\n'
-                '  "not_extracted": []\n'
-                "}\n"
-                "If course is not found, return {\"course\": null, \"units\": [], \"course_outcomes\": [], \"programme_outcomes\": [], \"co_po_matrix\": {}, \"books\": [], \"not_extracted\": [\"course not found\"]}.\n"
-                "Output ONLY JSON, no markdown backticks."
-            )
-        else:
-            sample_text = sample_text[:45000]
-            system_prompt = (
-                "You are SYLEX Universal Syllabus Extractor. Extract all courses listed in this syllabus document.\n"
-                "Return PURE JSON adhering strictly to this schema:\n"
-                "{\n"
-                f'  "document": "{Path(pdf_path).name}",\n'
-                '  "course_count": 0,\n'
-                '  "courses": [\n'
-                '    {"code": "...", "title": "...", "page": 1}\n'
-                '  ]\n'
-                "}\n"
-                "Output ONLY JSON, no markdown backticks."
-            )
-
-        parsed = None
-        reasoning_str = None
-        try:
-            if provider == "nvidia":
-                content_str, reasoning_str, _ = self._call_nvidia_nemotron(
-                    system_prompt=system_prompt,
-                    user_content=sample_text,
-                    model=model,
-                    api_key=api_key,
-                    endpoint=endpoint,
-                    temperature=0.7,
-                    top_p=0.95,
-                    max_tokens=4096,
-                    timeout=45.0
-                )
-                start_brace = content_str.find('{')
-                end_brace = content_str.rfind('}')
-                if start_brace != -1 and end_brace > start_brace:
-                    parsed = json.loads(content_str[start_brace:end_brace+1])
-                else:
-                    parsed = json.loads(content_str)
-                if isinstance(parsed, dict) and reasoning_str:
-                    parsed["_reasoning_summary"] = reasoning_str[:400]
-
-            elif provider == "gemini":
-                url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
-                payload = {
-                    "contents": [{
-                        "parts": [{"text": system_prompt + "\n\nSyllabus Document:\n" + sample_text}]
-                    }],
-                    "generationConfig": {
-                        "responseMimeType": "application/json",
-                        "temperature": 0.1
-                    }
-                }
-                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'),
-                                             headers={'Content-Type': 'application/json'}, method='POST')
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
-                    text_resp = data["candidates"][0]["content"]["parts"][0]["text"]
-                    start_brace = text_resp.find('{')
-                    end_brace = text_resp.rfind('}')
-                    parsed = json.loads(text_resp[start_brace:end_brace+1])
-
-            elif provider == "openai":
-                url = "https://api.openai.com/v1/chat/completions"
-                payload = {
-                    "model": model or "gpt-4o-mini",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": sample_text}
-                    ],
-                    "response_format": {"type": "json_object"},
-                    "temperature": 0.1
-                }
-                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'),
-                                             headers={'Content-Type': 'application/json', 'Authorization': f'Bearer {api_key}'},
-                                             method='POST')
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
-                    text_resp = data["choices"][0]["message"]["content"]
-                    start_brace = text_resp.find('{')
-                    end_brace = text_resp.rfind('}')
-                    parsed = json.loads(text_resp[start_brace:end_brace+1])
-
-            elif provider == "custom":
-                url = (endpoint.rstrip('/') if endpoint else "http://localhost:11434/v1") + "/chat/completions"
-                payload = {
-                    "model": model or "llama3.2",
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": sample_text}
-                    ],
-                    "temperature": 0.1
-                }
-                headers = {'Content-Type': 'application/json'}
-                if api_key: headers['Authorization'] = f'Bearer {api_key}'
-                req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'),
-                                             headers=headers, method='POST')
-                with urllib.request.urlopen(req, timeout=60) as resp:
-                    data = json.loads(resp.read().decode('utf-8'))
-                    text_resp = data["choices"][0]["message"]["content"]
-                    start_brace = text_resp.find('{')
-                    end_brace = text_resp.rfind('}')
-                    parsed = json.loads(text_resp[start_brace:end_brace+1])
-            else:
-                raise ValueError(f"Unknown provider: {provider}")
-        except Exception as online_err:
-            print(f"[Online Cloud Call Error: {online_err}] Falling back to grounded offline baseline...")
-            if offline_res:
-                offline_copy = dict(offline_res)
-                if "_debug" not in offline_copy: offline_copy["_debug"] = {}
-                offline_copy["_debug"]["online_error"] = str(online_err)
-                offline_copy["_debug"]["fallback_mode"] = "offline"
-                return offline_copy
-            raise
-
-        # Smart Hybrid Fusion: Merge Cloud AI enhancements with deterministic offline baseline
-        if offline_res and offline_res.get("course"):
-            if not isinstance(parsed, dict) or parsed.get("course") is None:
-                parsed = offline_res
-            else:
-                # Guarantee complete units, topics, outcomes, matrix, and books are never truncated
-                for field in ["units", "course_outcomes", "programme_outcomes", "co_po_matrix", "books"]:
-                    if not parsed.get(field) and offline_res.get(field):
-                        parsed[field] = offline_res[field]
-                if len(parsed.get("units", [])) < len(offline_res.get("units", [])):
-                    parsed["units"] = offline_res["units"]
-                if len(parsed.get("course_outcomes", [])) < len(offline_res.get("course_outcomes", [])):
-                    parsed["course_outcomes"] = offline_res["course_outcomes"]
-                if len(parsed.get("books", [])) < len(offline_res.get("books", [])):
-                    parsed["books"] = offline_res["books"]
-
-                c_llm = parsed.get("course") or {}
-                c_off = offline_res.get("course") or {}
-                for k, v in c_off.items():
-                    if k not in c_llm or c_llm[k] is None or c_llm[k] == "":
-                        c_llm[k] = v
-                parsed["course"] = c_llm
-
-        return parsed
+                    model: str = "", api_key: str = "", endpoint: str = "", hints_json: str = None) -> Dict:
+        """Page-addressed cloud review with validated proposals and local fallback."""
+        from cloud_models import CloudModels
+        from online_pipeline import run
+        client = CloudModels(provider, model, api_key, endpoint, DEFAULT_NVIDIA_API_KEY)
+        return run(pdf_path, course, json.loads(hints_json) if hints_json else {}, client)
 
     def _run_sylex(self, pdf_path: str, course: str = None,
                    hints_json: str = None, debug: bool = False) -> Dict:
@@ -3297,15 +3136,15 @@ class Handler(BaseHTTPRequestHandler):
 
         if course and any(w in q_lower for w in ["lesson", "plan", "lecture", "schedule", "hour", "hours"]):
             units = d2.get("units") or []
-            lines = [f"### 📅 Proposed 45-Hour Lesson Plan for **{course.get('code')} - {course.get('title')}**\n"]
+            lines = [f"### Suggested study sequence for **{course.get('code')} - {course.get('title')}**\n", 'Session numbering is a planning suggestion, not printed lecture allocation.']
             total_h = 0
             for u in units:
-                h = u.get("hours") or 9
-                total_h += h
-                lines.append(f"#### Unit {u.get('number')}: {u.get('title')} ({h} Hours)")
-                for t_idx, t in enumerate(u.get("topics", [])[:4], 1):
+                h = u.get("hours")
+                total_h += h or 0
+                lines.append(f"#### Unit {u.get('number')}: {u.get('title')} ({h if h is not None else 'not printed'} Hours)")
+                for t_idx, t in enumerate(u.get("topics", []), 1):
                     lines.append(f"- **Lecture {t_idx}**: {t.get('text')} *(Bloom Level: {t.get('bloom', 'understand').capitalize()})*")
-            lines.append(f"\n*Total Contact Hours Planned:* **{total_h} Hours**")
+            lines.append(f"\n*Sum of available printed unit hours:* **{total_h} Hours**; missing values are not inferred.")
             lines.append("\n💡 **Next Suggestions:**")
             lines.append("1. Ask: *'What pedagogical teaching methods fit Unit 2?'*")
             lines.append("2. Ask: *'Suggest active learning activities for Unit 3'*")
@@ -3661,7 +3500,7 @@ class SylexHTTPServer(ThreadingHTTPServer):
 
 def main():
     display_host = "localhost" if HOST in {"127.0.0.1", "localhost"} else HOST
-    print(f"SYLEX Concurrent Server v3.0 — http://{display_host}:{PORT}")
+    print(f"SYLEX Concurrent Server v5.0 — http://{display_host}:{PORT}")
     print(f"Python: {PYTHON}")
     print(f"Engine: {SYLEX_PY}")
     print(f"Mode:   OFFLINE (no internet required) + Threading Enabled")

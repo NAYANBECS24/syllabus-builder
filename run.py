@@ -50,6 +50,21 @@ def _read_server_pid():
         return None
 
 def _process_exists(pid):
+    if os.name == "nt":
+        try:
+            # `os.kill(pid, 0)` is not dependable on every Windows Python
+            # build: it can report access failure for a live process.
+            command = (
+                "$process = Get-Process -Id " + str(int(pid))
+                + " -ErrorAction SilentlyContinue; if ($null -ne $process) { exit 0 } exit 1"
+            )
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", command],
+                capture_output=True, text=True, timeout=5,
+            )
+            return result.returncode == 0
+        except (OSError, subprocess.SubprocessError, ValueError):
+            return False
     try:
         os.kill(pid, 0)
         return True
@@ -84,28 +99,36 @@ def _is_sylex_server(pid):
     server_path = os.path.normcase(os.path.abspath(SERVER))
     return bool(command and server_path in command)
 
-def _remove_stale_pid_file(expected_pid=None):
-    try:
-        if expected_pid is not None and _read_server_pid() != expected_pid:
-            return
-        os.remove(SERVER_PID_FILE)
-    except FileNotFoundError:
-        pass
+def _listener_pids(port):
+    """Return only the process IDs listening on one TCP port.
 
-def stop_previous_server():
-    """Stop only the prior server recorded by this project, never an arbitrary port owner."""
-    pid = _read_server_pid()
-    if not pid:
-        return False
-    if not _process_exists(pid) or not _is_sylex_server(pid):
-        _remove_stale_pid_file(pid)
-        return False
+    This is a recovery path for a missing PID marker. It never treats an
+    arbitrary port owner as SYLEX; callers still verify its command line.
+    """
+    try:
+        if os.name == "nt":
+            command = (
+                "Get-NetTCPConnection -State Listen -LocalPort " + str(int(port))
+                + " -ErrorAction SilentlyContinue | Select-Object -ExpandProperty OwningProcess"
+            )
+            result = subprocess.run(
+                ["powershell.exe", "-NoProfile", "-Command", command],
+                capture_output=True, text=True, timeout=5,
+            )
+            return sorted({int(value.strip()) for value in result.stdout.splitlines() if value.strip().isdigit()})
+        result = subprocess.run(
+            ["lsof", "-nP", f"-iTCP:{int(port)}", "-sTCP:LISTEN", "-t"],
+            capture_output=True, text=True, timeout=5,
+        )
+        return sorted({int(value.strip()) for value in result.stdout.splitlines() if value.strip().isdigit()})
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return []
+
+def _stop_server_process(pid):
     if os.name == "nt":
         result = subprocess.run(
             ["taskkill", "/PID", str(pid), "/T", "/F"],
-            capture_output=True,
-            text=True,
-            timeout=8,
+            capture_output=True, text=True, timeout=8,
         )
         if result.returncode != 0 and _process_exists(pid):
             raise RuntimeError("The previous SYLEX server could not be stopped")
@@ -117,8 +140,30 @@ def stop_previous_server():
         time.sleep(0.1)
     if _process_exists(pid):
         raise RuntimeError("The previous SYLEX server did not exit in time")
-    _remove_stale_pid_file(pid)
-    return True
+
+def _remove_stale_pid_file(expected_pid=None):
+    try:
+        if expected_pid is not None and _read_server_pid() != expected_pid:
+            return
+        os.remove(SERVER_PID_FILE)
+    except FileNotFoundError:
+        pass
+
+def stop_previous_server():
+    """Stop this project's prior server, including a valid unmarked listener."""
+    pid = _read_server_pid()
+    candidates = [pid] if pid else []
+    if not candidates:
+        candidates = _listener_pids(7823)
+    for candidate in candidates:
+        if not _process_exists(candidate) or not _is_sylex_server(candidate):
+            if candidate == pid:
+                _remove_stale_pid_file(candidate)
+            continue
+        _stop_server_process(candidate)
+        _remove_stale_pid_file(candidate)
+        return True
+    return False
 
 # ── Dependency check ───────────────────────────────────────────────
 REQUIRED = ["pdfplumber", "pymupdf"]
@@ -159,7 +204,7 @@ Examples:
   python run.py --server                             Start server only
 """
     )
-    parser.add_argument("--pdf",     default=None, help="Path to syllabus PDF")
+    parser.add_argument("--pdf", "--document", dest="pdf", default=None, help="Path to syllabus PDF, DOCX, text or image")
     parser.add_argument("--course",  default=None, help="Course code (Task 2)")
     parser.add_argument("--out",     default=None, help="Output JSON file path")
     parser.add_argument("--hints",   default=None, help="Hints JSON file path")
@@ -193,7 +238,7 @@ Examples:
         if args.hints:  cmd += ["--hints",  args.hints]
         if args.debug:  cmd.append("--debug")
 
-        print(f"SYLEX v3.0 — {'Task 2' if args.course else 'Task 1'}")
+        print(f"SYLEX v5.0 — {'Task 2' if args.course else 'Task 1'}")
         print(f"PDF:    {args.pdf}")
         if args.course: print(f"Course: {args.course}")
         print("─" * 50)
@@ -203,7 +248,7 @@ Examples:
 
     # ── Server / Web UI mode ─────────────────────────────────────
     print("╔══════════════════════════════════════════╗")
-    print("║   SYLEX v3.0 — Syllabus Extraction       ║")
+    print("║   SYLEX v5.0 — Syllabus Extraction       ║")
     print("║   Web UI starting at http://localhost:7823║")
     print("╚══════════════════════════════════════════╝")
     print()

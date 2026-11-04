@@ -21,7 +21,22 @@ class RunLauncherTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def test_missing_pid_file_means_no_previous_session(self):
-        self.assertFalse(run.stop_previous_server())
+        with patch.object(run, "_listener_pids", return_value=[]):
+            self.assertFalse(run.stop_previous_server())
+
+    def test_unmarked_listener_from_this_project_is_recovered(self):
+        with patch.object(run, "_listener_pids", return_value=[7823]), patch.object(
+            run, "_process_exists", side_effect=[True, False]
+        ), patch.object(run, "_is_sylex_server", return_value=True), patch.object(run, "_stop_server_process") as stop:
+            self.assertTrue(run.stop_previous_server())
+        stop.assert_called_once_with(7823)
+
+    def test_unmarked_foreign_listener_is_never_terminated(self):
+        with patch.object(run, "_listener_pids", return_value=[4444]), patch.object(
+            run, "_process_exists", return_value=True
+        ), patch.object(run, "_is_sylex_server", return_value=False), patch.object(run, "_stop_server_process") as stop:
+            self.assertFalse(run.stop_previous_server())
+        stop.assert_not_called()
 
     def test_unrelated_reused_pid_is_never_terminated(self):
         self.pid_file.write_text("4321", encoding="utf-8")

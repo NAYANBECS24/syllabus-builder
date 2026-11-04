@@ -12,11 +12,15 @@ The Studio adds a persistent project library with source PDFs and research notes
 
 Local mode uses deterministic extraction. Cloud-assisted mode can call a configured model and reports local fallback when used. No cloud credential is required for local PDF extraction. See [ARCHITECTURE.md](ARCHITECTURE.md) for module boundaries, request handling, and current limitations.
 
+The offline upgrade adds PDF/DOCX/text/Markdown/image inputs, local Tesseract OCR, persistent page caching, offline page reopening, exact-document result recovery and source-based local assistant replies. See [OFFLINE.md](OFFLINE.md) for setup, architecture, storage controls and limits. New extraction without internet requires the local Python server; the hosted site's cached interface alone cannot run Python.
+
+Online mode now adds page-based cloud review, vision recovery for unreadable PDFs, source-quote validation, explicit coverage reports and page-range controls for long documents. See [ONLINE.md](ONLINE.md) for the processing and evidence contracts. Both online catalog and detail extraction preserve their local baseline when providers fail.
+
 ---
 
 ## 1. Clean Machine Installation
 
-Tested on Python 3.8+ (Windows, Linux, macOS). Only two dependencies.
+Validated here on Python 3.12 on Windows. Two required Python dependencies; Tesseract is optional for scans.
 
 ```bash
 # Clone the repository
@@ -160,7 +164,7 @@ The engine is fully deterministic. Three runs on the same input produce byte-ide
 
 ## 7. Honest List of Known Weaknesses
 
-1. **Scanned/Image-only PDFs**: Pages without a text layer return empty strings. Logged in `not_extracted` with a note to install Tesseract. No OCR is attempted.
+1. **Scanned/Image-only PDFs**: Local Tesseract OCR is attempted when installed. Time limits, unavailable language data and unreadable scans are reported in `_source`; OCR text always needs review.
 2. **CO-PO Matrix in Images**: If the matrix is rendered as an image/screenshot rather than table/text, it cannot be extracted. Reported honestly in `not_extracted`.
 3. **Merged Table Cells**: Tables with irregular merged cells (especially across page boundaries) may lose some cell values. Blanks are omitted rather than guessed — Rule 3 compliance.
 4. **Courses Without Codes**: If a document lists courses purely by title without any alphanumeric code, detection relies on syllabus page markers (PREAMBLE, COURSE OBJECTIVES, UNIT headings). Coverage is lower than for coded courses.

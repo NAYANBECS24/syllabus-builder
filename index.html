@@ -145,7 +145,8 @@
   </div>
 
   <!-- Drag & Drop Zone -->
-  <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Upload PDF Area">
+  <div id="offline-readiness" class="server-bar" role="status" aria-live="polite">Local extraction works without internet while the local server is running.</div>
+  <div id="drop-zone" class="drop-zone" role="button" tabindex="0" aria-label="Upload syllabus document">
     <div class="drop-icon">
       <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
         <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
@@ -154,14 +155,14 @@
         <line x1="9" y1="15" x2="15" y2="15"/>
       </svg>
     </div>
-    <div class="drop-title">Drop a syllabus PDF here</div>
+    <div class="drop-title">Drop a syllabus document here</div>
     <div class="drop-sub">or select a file from your computer</div>
     <div class="drop-formats">
-      <span class="format-tag">PDF only</span>
+      <span class="format-tag">PDF · DOCX · TXT · MD · Images</span>
       <span class="format-tag">Maximum 50 MB</span>
-      <span class="format-tag">Text-based documents</span>
+      <span class="format-tag">Local OCR for scans</span>
     </div>
-    <input type="file" id="file-input" accept=".pdf" style="display:none"/>
+    <input type="file" id="file-input" accept=".pdf,.docx,.txt,.md,.png,.jpg,.jpeg,.tif,.tiff" style="display:none"/>
   </div>
 
   <!-- Selected file badge -->
@@ -197,7 +198,7 @@
           <div class="mode-radio"><span class="radio-dot"></span></div>
         </div>
         <div class="mode-card-title">Local deterministic</div>
-        <div class="mode-card-desc">Processes the document with the local rules engine. No model request is made.</div>
+        <div class="mode-card-desc">Uses deterministic document parsing and locally installed OCR. Runs without internet in the local app; the hosted site still requires its server.</div>
         <div class="mode-card-features">
           <span class="m-feat">Private by default</span>
           <span class="m-feat">Repeatable output</span>
@@ -216,9 +217,9 @@
           <div class="mode-radio"><span class="radio-dot"></span></div>
         </div>
         <div class="mode-card-title">Cloud-assisted</div>
-        <div class="mode-card-desc">Uses the configured model for semantic disambiguation, with local fallback when available.</div>
+        <div class="mode-card-desc">Reviews source pages with the configured model and checks each proposed addition against page text. Unreadable PDF pages may be sent to a vision model. Local extraction remains available.</div>
         <div class="mode-card-features">
-          <span class="m-feat">Semantic review</span>
+          <span class="m-feat">Page evidence checks</span>
           <span class="m-feat">Local fallback</span>
         </div>
       </button>
@@ -227,6 +228,11 @@
 
   <!-- Online Cloud AI Drawer -->
   <div id="online-config-drawer" style="display:none;margin-top:1.25rem;padding:1.25rem;background:var(--bg-elevated);border:1px solid var(--border-accent);border-radius:var(--radius-md)">
+    <p>Cloud review has a time and page budget. For a long syllabus, review the remaining pages by choosing a range below. Local extraction still reads the whole document.</p>
+    <div class="options-grid" style="margin:1rem 0">
+      <div class="option-group"><label for="online-start-page">Cloud review from page</label><input id="online-start-page" class="input-field" type="number" min="1" max="1500" placeholder="1"/></div>
+      <div class="option-group"><label for="online-end-page">Through page</label><input id="online-end-page" class="input-field" type="number" min="1" max="1500" placeholder="Last page"/></div>
+    </div>
     <div style="display:flex;justify-content:flex-end;align-items:center;flex-wrap:wrap;gap:12px">
       <button class="btn btn-sm btn-ghost" type="button" onclick="testOnlineKey()" id="btn-test-key">Test Connection</button>
       <span id="key-status-msg" style="font-size:0.75rem;font-weight:600"></span>
@@ -320,6 +326,11 @@ python run.py</pre>
   </div>
 
   <div id="results-data" hidden>
+  <div id="source-quality" class="server-bar" role="status" hidden></div>
+  <details id="online-review" class="card" hidden style="padding:1rem;margin-bottom:1rem">
+    <summary id="online-review-summary">Cloud review coverage</summary>
+    <div id="online-review-content" style="padding-top:1rem;overflow-wrap:anywhere"></div>
+  </details>
 
   <!-- Stats KPI Banner -->
   <div class="stats-banner" id="stats-banner"></div>
@@ -1078,10 +1089,12 @@ python run.py</pre>
 
 <script src="demo-data.js"></script>
 <script src="api-client.js?v=1"></script>
+<script src="offline.js?v=4.1"></script>
 <script src="app.js"></script>
 <script src="book.js"></script>
 <script src="book-finder.js"></script>
 <script src="chat.js"></script>
+<script src="local-assistant.js?v=4.1"></script>
 <script src="cinematic.js?v=2"></script>
 <script src="workspace.js?v=1"></script>
 <script src="studio-core.js?v=1"></script>

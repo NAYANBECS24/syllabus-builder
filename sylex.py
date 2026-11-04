@@ -9,13 +9,14 @@ Hints:   python sylex.py --pdf syllabus.pdf --hints hints.json
 Debug:   python sylex.py --pdf syllabus.pdf --debug
 """
 
-import argparse, json, re, sys, os, hashlib, unicodedata, warnings, urllib, urllib.request, threading
+import argparse, json, re, sys, os, hashlib, unicodedata, warnings, urllib, urllib.request, threading, copy
 os.environ["PYMUPDF_SUGGEST_LAYOUT_ANALYZER"] = "0"
 warnings.filterwarnings("ignore")
 
 from pathlib  import Path
 from typing   import Optional, List, Dict, Tuple, Any
 from collections import defaultdict, Counter, OrderedDict
+from document_ingest import LocalOCR, MAX_PAGES, read_non_pdf, source_report, native_page_text
 
 # ── PDF libraries ──────────────────────────────────────────────────────
 try:
@@ -86,7 +87,10 @@ def is_valid_course_code(code: str) -> bool:
         return False
     if c in {'POP3', 'IPV4', 'IPV6', 'HTML5', 'CSS3', 'MP3', 'MP4', 'SHA1', 'SHA2', 'WIN32', 'X86', 'UTF8', 'UTF16', 'HTTP', 'HTTPS'}:
         return False
-    # Reject codes containing dots or commas (e.g. "1.2023", "TOTAL:45")
+    # Dotted university codes (6.0001, 18.06) are valid; years and list markers are not.
+    if re.fullmatch(r'\d{1,2}\.\d{2,4}[A-Z]?', c):
+        return True
+    # Reject other tokens containing dots or commas.
     if '.' in c or ',' in c:
         return False
     # Reject numbered list items (e.g. "2 MITTAL", "1 GHOSAL", "1. INTRODUCTION", "3 STEVE")
@@ -153,8 +157,8 @@ def clean_title(title_lines: List[str]) -> str:
     raw = re.sub(r'\s+', ' ', raw)
     return raw.strip(' :-|.,;')
 RE_UNIT = re.compile(
-    r'(?i)(?:^|[\n\r]|(?<=[.;:\s]))'
-    r'(UNIT|MODUL(?:E)?|PART|CHAPTER|SECTION|WEEK|SESSION)\s*'
+    r'(?im)^\s*'
+    r'(UNIT|MODUL(?:E)?|PART|CHAPTER|SECTION|WEEK|SESSION|LESSON|TOPIC)\s*'
     r'[-–—:.\s]*\s*([IVXLCDM]+|\d+)\b'
 )
 RE_ROMAN_UNIT = re.compile(
@@ -302,10 +306,12 @@ class PageInfo:
 # ══════════════════════════════════════════════════════════════════════
 
 class PDFReader:
-    def __init__(self, path: str):
+    def __init__(self, path: str, ocr_budget=None):
         self.path  = path
+        self.ocr_budget = ocr_budget
         self.pages: List[PageInfo] = []
         self._sha  = ""
+        self.page_diagnostics = []
         self._load()
 
     def _load(self):
@@ -316,15 +322,63 @@ class PDFReader:
         with open(self.path,'rb') as f:
             for chunk in iter(lambda: f.read(65536), b''): h.update(chunk)
         self._sha = h.hexdigest()
+        import offline_cache
+        key = offline_cache.cache_key(self._sha)
+        cached = offline_cache.get(key)
+        if cached and cached.get('format') == Path(self.path).suffix.lower():
+            try:
+                self.pages = [PageInfo(**p) for p in cached['pages']]
+                self.page_diagnostics = cached['diagnostics']
+                if len(self.pages) == len(self.page_diagnostics) and self.pages:
+                    return
+            except (TypeError, KeyError):
+                pass
+            self.pages, self.page_diagnostics = [], []
+
+        try:
+            adapted = read_non_pdf(self.path)
+            if adapted is not None:
+                if len(adapted) > MAX_PAGES:
+                    raise PDFReadError(f'Document exceeds {MAX_PAGES} logical pages')
+                for number, page in enumerate(adapted, 1):
+                    text = page['text']
+                    self.pages.append(PageInfo(number, text, page['tables'], [], not text.strip()))
+                    self.page_diagnostics.append({'page': number, 'method': page['method'], 'characters': len(text),
+                                                  'needs_review': not text.strip(), 'warnings': page['warnings']})
+                self._save_pages(key)
+                return
+        except Exception as exc:
+            raise PDFReadError(f'Could not read document: {exc}') from exc
 
         if HAS_FITZ:
-            self._load_fitz()
+            try:
+                self._load_fitz()
+            except PDFReadError:
+                if not HAS_PDFPLUMBER or Path(self.path).suffix.lower() != '.pdf':
+                    raise
+                self.pages = []
+                self.page_diagnostics = []
+                self._load_pdfplumber()
         elif HAS_PDFPLUMBER:
             self._load_pdfplumber()
+        # Do not retain failed / partial OCR attempts: installing language data or
+        # splitting a large scan must allow a later attempt to recover its text.
+        if not any(p.is_scanned for p in self.pages) and not any(
+                any(w.startswith(('OCR unavailable', 'OCR document', 'Local OCR', 'OCR page', 'OCR failed')) for w in p['warnings'])
+                for p in self.page_diagnostics):
+            self._save_pages(key)
+
+    def _save_pages(self, key):
+        import offline_cache
+        offline_cache.put(key, {'format': Path(self.path).suffix.lower(),
+            'pages': [{slot: getattr(p, slot) for slot in PageInfo.__slots__} for p in self.pages],
+            'diagnostics': self.page_diagnostics})
 
     def _load_pdfplumber(self):
         try:
             with pdfplumber.open(self.path) as pdf:
+                if len(pdf.pages) > MAX_PAGES:
+                    raise PDFReadError(f'Document exceeds the {MAX_PAGES} page limit; split it into smaller documents.')
                 for i, pg in enumerate(pdf.pages, 1):
                     text = pg.extract_text(x_tolerance=3, y_tolerance=3) or ""
                     tables = []
@@ -340,19 +394,52 @@ class PDFReader:
                     except Exception: pass
                     is_scanned = len(text.strip()) < 50 and len(words) < 10
                     self.pages.append(PageInfo(i, text, tables, words, is_scanned))
+                    self.page_diagnostics.append({'page': i, 'method': 'pdfplumber', 'characters': len(text),
+                        'needs_review': is_scanned, 'warnings': ['Page has little readable text; OCR may be needed.'] if is_scanned else []})
         except Exception as e:
             raise PDFReadError(f"Could not read PDF: {e}") from e
 
     def _load_fitz(self):
         try:
-            doc = fitz.open(self.path)
-            for i, pg in enumerate(doc, 1):
-                text  = pg.get_text("text") or ""
-                words = [{"text":w[4],"x0":w[0],"y0":w[1],"x1":w[2],"y1":w[3]}
-                         for w in pg.get_text("words")]
-                is_scanned = len(text.strip()) < 50
-                self.pages.append(PageInfo(i, text, [], words, is_scanned))
-            doc.close()
+            with fitz.open(self.path) as original:
+                if original.needs_pass:
+                    raise PDFReadError('Document is password protected. Save an unlocked copy first.')
+                converted = None
+                if not original.is_pdf:
+                    converted = fitz.open(stream=original.convert_to_pdf(), filetype='pdf')
+                doc = converted or original
+                try:
+                    if len(doc) > MAX_PAGES:
+                        raise PDFReadError(f'Document exceeds the {MAX_PAGES} page limit; split it into smaller documents.')
+                    ocr = LocalOCR(self.ocr_budget)
+                    for i, pg in enumerate(doc, 1):
+                        text, layout, layout_warnings = native_page_text(pg)
+                        words = [{"text":w[4],"x0":w[0],"y0":w[1],"x1":w[2],"y1":w[3]}
+                                 for w in pg.get_text('words', sort=True)]
+                        issues, method, confidence = list(layout_warnings), 'native', None
+                        # Mixed PDFs can contain a scanned body and a native page-number header.
+                        image_area = sum(fitz.Rect(image['bbox']).get_area() for image in pg.get_image_info())
+                        low_text = len(text.strip()) < 50 or text.count('\ufffd') > len(text) * .05
+                        needs_ocr = low_text or image_area > pg.rect.get_area() * .60
+                        if needs_ocr and (image_area or text.strip()):
+                            result, error = ocr.read(pg)
+                            if result and len(result['text'].strip()) > len(text.strip()):
+                                text, words, confidence = result['text'], result['words'], result['confidence']
+                                method = 'ocr'
+                                issues.append('OCR text must be checked against the original, especially numbers and tables.')
+                            if error:
+                                issues.append(error)
+                            elif method != 'ocr' and image_area > pg.rect.get_area() * .60:
+                                issues.append('Image content could not be recovered reliably; retained native text and flagged the page for review.')
+                        unreadable = len(text.strip()) < 30
+                        if unreadable:
+                            issues.append('Page has little or no readable text; it may be blank or require a clearer scan.')
+                        self.pages.append(PageInfo(i, text, [], words, unreadable))
+                        self.page_diagnostics.append({'page': i, 'method': method, 'layout': layout, 'characters': len(text),
+                            'confidence': confidence, 'needs_review': unreadable or method == 'ocr' or bool(issues), 'warnings': issues})
+                finally:
+                    if converted is not None:
+                        converted.close()
         except Exception as e:
             raise PDFReadError(f"Could not read PDF: {e}") from e
 
@@ -380,6 +467,8 @@ class PDFReader:
                              if start <= p.number <= end)
 
     def _extract_tables_for_page(self, page_num: int) -> List[List[List[str]]]:
+        if Path(self.path).suffix.lower() != '.pdf':
+            return self.pages[page_num - 1].tables
         fitz_tables = []
         if HAS_FITZ:
             try:
@@ -596,8 +685,7 @@ class CourseDetector:
                                 if norm not in syllabus_candidates:
                                     syllabus_candidates[norm] = CourseCandidate(code_cand, t, pg.number, 0.98, ["syllabus-page"])
                                 # Only break if top of page; mid-page may have another course or continue
-                                if i < 8:
-                                    break
+                                # Continue: two complete courses can share one page.
 
             # 2. Multi-course Curriculum / Overview Table (from text lines)
             if is_multi_course_page:
@@ -651,6 +739,13 @@ class CourseDetector:
                         # Dedup by code alone
                         if norm not in syllabus_candidates:
                             syllabus_candidates[norm] = CourseCandidate(code_cand, t, pg.number, 0.95, ["explicit-label"])
+
+            # A printed course title is enough when the document has no course code.
+            if not any(c.page == pg.number for c in syllabus_candidates.values()) and has_syllabus_signals:
+                for match in RE_LABEL_TITLE.finditer(text):
+                    title = match.group(1).strip()
+                    if len(title) > 3:
+                        syllabus_candidates['title:' + norm_title(title)] = CourseCandidate('', title, pg.number, .85, ['title-label'])
 
         # Merge: syllabus_candidates wins over curriculum_candidates
         from collections import OrderedDict
@@ -801,7 +896,7 @@ class CourseDetector:
         next_cand = next((c for c in candidates[idx+1:]
                           if not codes_match(c.code, target_cand.code)
                           and c.page >= start
-                          and (c.page - start) <= 6), None)
+                          ), None)
         if next_cand:
             if next_cand.page == start:
                 # Same page: we trust the text-based cross-course truncation in DeepExtractor
@@ -819,7 +914,7 @@ class CourseDetector:
                         end = pg.number
                         break
             if end is None or end <= start:
-                end = min(start + 3, self.reader.page_count)
+                end = self.reader.page_count
 
         return start, max(start, end)
 
@@ -864,7 +959,7 @@ class DeepExtractor:
         if self.scanned:
             self.not_extracted.append(
                 f"pages {self.scanned} appear scanned — text extraction may be incomplete; "
-                f"install pytesseract for OCR support"
+                f"check local OCR availability and review the original document"
             )
 
     # ── Front matter ────────────────────────────────────────────────
@@ -889,7 +984,7 @@ class DeepExtractor:
         elif not any(result[k] is not None for k in ["lecture","tutorial","practical"]):
             m = RE_CREDITS.search(text)
             if m:
-                try: result["credits"] = int(float(m.group(1)))
+                try: result["credits"] = float(m.group(1))
                 except: pass
         return result
 
@@ -913,7 +1008,7 @@ class DeepExtractor:
                     if i + 1 < len(tbl):
                         vals = []
                         for c in tbl[i+1]:
-                            try: vals.append(int(str(c).strip()))
+                            try: vals.append(float(str(c).strip()))
                             except: pass
                         if len(vals) >= 3: return vals[:4]
 
@@ -921,9 +1016,9 @@ class DeepExtractor:
         m = re.search(r'(?i)\bL\s*[\n\t\s/:-]*T\s*[\n\t\s/:-]*P(?:\s*[\n\t\s/:-]*C(?:redits?)?)?\b', text)
         if m:
             after = text[m.end():m.end()+150]
-            m_tuple = re.search(r'\b(\d{1,2})\s*[-/:\s]\s*(\d{1,2})\s*[-/:\s]\s*(\d{1,2})(?:\s*[-/:\s]\s*(\d{1,2}))?\b', after)
+            m_tuple = re.search(r'\b(\d{1,2})\s*[-/:\s]\s*(\d{1,2})\s*[-/:\s]\s*(\d{1,2})(?:\s*[-/:\s]\s*(\d{1,2}(?:\.\d+)?))?\b', after)
             if m_tuple:
-                vals = [int(m_tuple.group(i)) for i in range(1, 5) if m_tuple.group(i) is not None]
+                vals = [float(m_tuple.group(i)) for i in range(1, 5) if m_tuple.group(i) is not None]
                 if len(vals) >= 3:
                     return vals[:4]
             nums = re.findall(r'\b\d+\b', after)
@@ -1015,6 +1110,7 @@ class DeepExtractor:
             # Fallback E: Treat entire course text as Unit 1 if body has content
             trimmed = self._trim_unit_body(text)
             if len(trimmed) > 50:
+                self.not_extracted.append('units — no explicit unit boundaries found; source text retained as one unstructured section for review')
                 topics = self._split_topics(trimmed, 1)
                 units.append({
                     "number": 1,
@@ -1940,25 +2036,26 @@ def _get_doc_cache_key(reader: 'PDFReader', hints: Dict = None) -> str:
     except (TypeError, ValueError):
         hints_json = repr(hints or {})
     hints_hash = hashlib.sha256(hints_json.encode('utf-8')).hexdigest()
-    return f"{reader._sha}:{hints_hash}"
+    text_hash = hashlib.sha256(reader.full_text().encode('utf-8')).hexdigest()
+    return f"{reader._sha}:{text_hash}:{hints_hash}"
 
 def _course_cache_get(key: str) -> Optional[List['CourseCandidate']]:
     with _GLOBAL_COURSE_DETECTOR_CACHE_LOCK:
         cached = _GLOBAL_COURSE_DETECTOR_CACHE.get(key)
         if cached is not None:
             _GLOBAL_COURSE_DETECTOR_CACHE.move_to_end(key)
-        return cached
+        return copy.deepcopy(cached)
 
 def _course_cache_set(key: str, candidates: List['CourseCandidate']):
     with _GLOBAL_COURSE_DETECTOR_CACHE_LOCK:
-        _GLOBAL_COURSE_DETECTOR_CACHE[key] = candidates
+        _GLOBAL_COURSE_DETECTOR_CACHE[key] = copy.deepcopy(candidates)
         _GLOBAL_COURSE_DETECTOR_CACHE.move_to_end(key)
         while len(_GLOBAL_COURSE_DETECTOR_CACHE) > _COURSE_CACHE_MAX_ITEMS:
             _GLOBAL_COURSE_DETECTOR_CACHE.popitem(last=False)
 
-def run_task1(pdf_path: str, hints: Dict = None) -> Dict:
+def run_task1(pdf_path: str, hints: Dict = None, _reader=None) -> Dict:
     hints    = hints or {}
-    reader   = PDFReader(pdf_path)
+    reader   = _reader or PDFReader(pdf_path)
     grammar  = DocumentGrammar(reader)
     doc_key  = _get_doc_cache_key(reader, hints)
     cands = _course_cache_get(doc_key)
@@ -1974,12 +2071,13 @@ def run_task1(pdf_path: str, hints: Dict = None) -> Dict:
         "document":     Path(pdf_path).name,
         "course_count": len(courses),
         "courses":      courses,
+        "_source":      source_report(reader),
     }
 
 def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
-              debug: bool = False) -> Dict:
+              debug: bool = False, _reader=None, _include_text=False) -> Dict:
     hints    = hints or {}
-    reader   = PDFReader(pdf_path)
+    reader   = _reader or PDFReader(pdf_path)
     grammar  = DocumentGrammar(reader)
     doc_key  = _get_doc_cache_key(reader, hints)
 
@@ -2042,6 +2140,7 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
             "programme_outcomes": [], "co_po_matrix": {},
             "books": [],
             "not_extracted": [f"requested course '{course_id}' not found in document"],
+            "_source": source_report(reader),
         }
 
     sp, ep = detector.find_boundary(cands, target.code, target.title, target_obj=target)
@@ -2057,7 +2156,7 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
         if codes_match(hinted_code, target.code) or title_matches:
             try:
                 hinted_start = int(hinted_course.get("start_page") or hinted_course.get("page") or sp)
-                hinted_end = int(hinted_course.get("end_page") or hinted_start)
+                hinted_end = int(hinted_course.get("end_page") or ep)
                 sp = max(1, min(hinted_start, reader.page_count))
                 ep = max(sp, min(hinted_end, reader.page_count))
             except (TypeError, ValueError):
@@ -2067,7 +2166,48 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
     hints_with_code["course_code"] = target.code
     ext    = DeepExtractor(reader, grammar, sp, ep, hints_with_code)
 
+    # Use printed header positions to isolate courses sharing a page. Ordinary
+    # mentions of a code within topics must not become document boundaries.
+    def header_position(candidate, text):
+        identity = candidate.code or candidate.title
+        if not identity:
+            return None
+        identity_pattern = r'\s*'.join(re.escape(part) for part in identity.split())
+        pattern = r'(?im)^[ \t]*(?:(?:course|subject|paper)\s*(?:code|title|name|number|no\.?)\s*[:\-]\s*)?' + identity_pattern + r'(?=\s|$|[:\-])'
+        match = re.search(pattern, text)
+        if not match and candidate.code and candidate.title:
+            match = re.search(r'(?im)^[ \t]*' + re.escape(candidate.title) + r'\s*[-–—:|]*\s*' + identity_pattern + r'\b', text)
+        return match.start() if match else None
+
+    pieces, used_pages = [], []
+    for page in reader.pages[sp-1:ep]:
+        text = page.text
+        start_at = header_position(target, text) if page.number == sp else None
+        start_at = start_at if start_at is not None else 0
+        ends = []
+        for candidate in cands:
+            if candidate is target or candidate.page != page.number:
+                continue
+            if codes_match(candidate.code, target.code) or (not candidate.code and candidate.title == target.title):
+                continue
+            position = header_position(candidate, text)
+            if position is not None and (page.number > sp or position > start_at):
+                ends.append(position)
+        end_at = min(ends) if ends else len(text)
+        if text[start_at:end_at].strip():
+            pieces.append(text[start_at:end_at])
+            used_pages.append(page.number)
+        if ends:
+            break
+    ext.text = '\n\f\n'.join(pieces)
+    ext.tables = [(p, table) for p, table in ext.tables if p in used_pages]
+    if any(sum(c.page == p for c in cands) > 1 for p in used_pages):
+        # Tables have no reliable character offsets; do not assign another course's table.
+        ext.tables = [(p, table) for p, table in ext.tables if sum(c.page == p for c in cands) == 1]
+        ext.not_extracted.append('Shared-page tables require review; text sections are isolated by printed course headings.')
+
     meta   = ext.extract_front_matter(target.code, target.title)
+    meta['pages'] = used_pages or [sp]
     units  = ext.extract_units()
     cos    = ext.extract_course_outcomes()
     pos    = ext.extract_programme_outcomes()
@@ -2082,7 +2222,15 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
         "co_po_matrix":       matrix,
         "books":              books,
         "not_extracted":      sorted(set(ext.not_extracted)),
+        "_source":            source_report(reader),
     }
+    result['_quality'] = {
+        'status': 'review_required' if ext.not_extracted or any(reader.page_diagnostics[p-1]['needs_review'] for p in used_pages) else 'parsed',
+        'source_pages': used_pages, 'unit_count': len(units), 'outcome_count': len(cos),
+        'note': 'Parsed fields are not a guarantee of completeness. Review source pages and inferred Bloom levels.',
+    }
+    if _include_text:
+        result['_page_text'] = dict(zip(used_pages, pieces))
 
     if debug:
         result["_debug"] = {
@@ -2299,7 +2447,7 @@ Examples:
 Exit codes:  0=ok  2=pdf missing  3=course not found  4=error
 """
     )
-    parser.add_argument('--pdf',    required=True)
+    parser.add_argument('--pdf', '--document', dest='pdf', required=True)
     parser.add_argument('--course', default=None)
     parser.add_argument('--out',    default=None)
     parser.add_argument('--hints',  default=None,

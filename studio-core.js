@@ -94,6 +94,22 @@
     if (!Array.isArray(data.courseDetails) || data.courseDetails.length > 2000 || (data.task1 && !Array.isArray(data.task1.courses))) throw new Error('The project contains an invalid course catalog.');
     const numeric = value => value === undefined || value === null || (typeof value === 'number' && Number.isFinite(value) && value >= 0);
     const reasoningShape = value => {
+      if (value._online != null) {
+        const review = value._online;
+        if (typeof review !== 'object' || !['reviewed','partial','fallback'].includes(review.status) ||
+            ['reviewed_pages','unreviewed_pages','vision_pages'].some(key => !Array.isArray(review[key]) || review[key].some(p => !Number.isInteger(p) || p < 1)) ||
+            ['models','warnings'].some(key => !Array.isArray(review[key]) || review[key].some(v => typeof v !== 'string')) ||
+            ['accepted_proposals','rejected_proposals','conflicts'].some(key => !Number.isInteger(review[key]) || review[key] < 0)) throw new Error('Invalid cloud review metadata.');
+        if (review.outside_review_pages != null && (!Array.isArray(review.outside_review_pages) || review.outside_review_pages.some(p => !Number.isInteger(p) || p < 1))) throw new Error('Invalid cloud page range metadata.');
+      }
+      if (value._evidence != null && (!Array.isArray(value._evidence) || value._evidence.some(item => !item || !Number.isInteger(item.page) || item.page < 1 || ['quote','field','source_method'].some(key => typeof item[key] !== 'string')))) throw new Error('Invalid cloud evidence metadata.');
+      if (value._source != null) {
+        const source = value._source;
+        if (typeof source !== 'object' || !Number.isInteger(source.page_count) || source.page_count < 0 ||
+            !Array.isArray(source.review_pages) || !Array.isArray(source.ocr_pages) || !Array.isArray(source.warnings) ||
+            [...source.review_pages, ...source.ocr_pages].some(page => !Number.isInteger(page) || page < 1) ||
+            source.warnings.some(warning => typeof warning !== 'string')) throw new Error('Invalid document readability metadata.');
+      }
       if (value._reasoning_summary != null && typeof value._reasoning_summary !== 'string') throw new Error('The project has invalid analysis notes.');
       if (value._debug?.reasoning != null && typeof value._debug.reasoning !== 'string') throw new Error('The project has invalid reasoning metadata.');
       if (value._debug?.scanned_pages && (!Array.isArray(value._debug.scanned_pages) || value._debug.scanned_pages.some(page => !Number.isInteger(page) || page < 1))) throw new Error('The project has invalid source-page metadata.');

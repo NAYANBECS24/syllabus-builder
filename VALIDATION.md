@@ -9,6 +9,22 @@
 
 Tests used generated documents and an isolated browser profile. No user document was sent to a model during validation. Local service left running at http://localhost:7823.
 
+## Online evidence pipeline — 4 November 2026
+
+- 74 Python tests and 21 JavaScript tests passed. Added tests cover grounded cloud proposals, fabricated/wrong-page evidence, metadata conflicts, short-code recovery, no-credential/provider fallback, partial coverage, page-range continuation, topic completeness, two-column PDFs, vision without local OCR, response truncation, project evidence validation, and safe recovery of unmarked local server listeners.
+- Live NVIDIA text review recovered a synthetic CS50 syllabus missed by the local code detector, preserving both units and fractional credits. Unsupported model output was rejected and reported.
+- The initial vision endpoint returned HTTP 410. After checking current provider availability, the default was changed to Nemotron 3 Nano Omni. Live image-only PDF extraction then passed with local OCR deliberately disabled; the course and both units were recovered and labeled for visual review.
+- Browser regression passed for the real online HTTP pipeline with a deterministic provider fixture, coverage UI, saved evidence/project restoration, offline shell/result recovery, document mismatch rejection, automatic local fallback and 390px/1440px layouts without page errors.
+- OpenAI/Gemini/custom adapters were retained, but not live-verified with credentials. No user document was sent in these checks. See [ONLINE.md](ONLINE.md) for remaining limits and reproducible checks.
+
+## Offline upgrade — 4 November 2026
+
+- 53 Python checks and 20 JavaScript checks passed on Python 3.12 / Node 24. Real Tesseract OCR tests ran successfully on generated scanned PDFs and PNG images.
+- Regression coverage includes course continuation pages with catalog hints, eight-page courses, two courses sharing a page, dotted/spaced/numeric codes, uncoded titles, DOCX tables and Unicode text, Markdown, sparse/encrypted PDFs, missing OCR, cache reuse/clear, fractional credits, invalid hints, local chat and cloud-outage fallback.
+- Isolated Chromium check passed with external networking blocked for new local extraction. With all browser networking disabled, the cached page reopened, the saved project/source restored, and the exact prior extraction replayed. A different document was rejected rather than receiving cached data. Mobile/desktop layouts and automatic local fallback were checked without page errors.
+- Live configured NVIDIA cloud model returned a successful synthetic connection reply. Book discovery for a public sample returned 14 results; Open Library, Google Books, Internet Archive, Project Gutenberg and Crossref responded. DOAB returned HTTP 403, correctly exposed as unavailable.
+- These checks use synthetic/public data. They do not establish universal extraction accuracy or future provider availability. See [OFFLINE.md](OFFLINE.md) for setup, supported formats and remaining limits.
+
 ## Curriculum Studio expansion
 
 - Added pure curriculum operations, transactional IndexedDB storage, and a separate Studio interface.
