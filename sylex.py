@@ -44,6 +44,17 @@ if not HAS_PDFPLUMBER and not HAS_FITZ:
 class PDFReadError(RuntimeError):
     """Raised when a PDF cannot be found or parsed."""
 
+
+def _normalize_text(text: str) -> str:
+    """Normalize line endings to LF so regex anchors work uniformly across sources.
+
+    Windows text files, some OCR engines, and certain PDF extraction libraries
+    produce \\r\\n or bare \\r endings.  Multiline regex ``$`` anchors do NOT
+    consume a leading \\r, so ``Course Content:\\r`` would not match the
+    ``RE_CONTENT_HEADING`` pattern.  Normalising early removes the ambiguity.
+    """
+    return str(text or '').replace('\r\n', '\n').replace('\r', '\n')
+
 # ══════════════════════════════════════════════════════════════════════
 #  SIGNAL PATTERNS  (generic — zero college specifics)
 # ══════════════════════════════════════════════════════════════════════
@@ -124,15 +135,21 @@ def is_valid_course_code(code: str) -> bool:
     has_digit = bool(re.search(r'\d', c))
     if not (has_alpha and has_digit):
         return False
-    # Require at least 3 consecutive digits (reject M2M, CORTEXM3/M4, 4NF, I2C, etc.)
-    if not re.search(r'\d{3,}', c.replace(' ', '')):
-        return False
+    compact = c.replace(' ', '')
+    # Most institutional codes have at least three digits. A number of
+    # universities also use short codes (CS50, EE40, MATH10), which are safe
+    # only when they have a clear alphabetic department prefix. Keeping this
+    # narrow avoids turning ordinary technical tokens such as M2M or I2C into
+    # courses.
+    if not re.search(r'\d{3,}', compact):
+        if not re.fullmatch(r'[A-Z]{2,8}-?\d{2}[A-Z]?', compact):
+            return False
     if not (3 <= len(c.replace(' ', '')) <= 15):
         return False
     return True
 
 def norm_title(t: str) -> str:
-    return re.sub(r'[^A-Z0-9]', '', str(t or '').upper())
+    return ''.join(c for c in unicodedata.normalize('NFKC', str(t or '')).upper() if c.isalnum())
 
 def codes_match(c1: str, c2: str) -> bool:
     if not c1 or not c2: return False
@@ -146,6 +163,7 @@ def codes_match(c1: str, c2: str) -> bool:
 
 def clean_title(title_lines: List[str]) -> str:
     raw = ' '.join(title_lines)
+    raw = re.sub(r'(?i)^\s*(?:course|subject|paper|module)\s+(?:title|name)\s*[:\-]\s*', '', raw)
     raw = re.sub(r'^\s*\(?\d+\)?[\.\)]\s*', '', raw)
     raw = re.sub(r'\s+\d\s+\d\s+\d\s+\d.*$', '', raw)
     raw = re.sub(r'(?i)\s+\d+(?:\.\d+)?\s*credits?\b.*$', '', raw)
@@ -162,7 +180,7 @@ RE_UNIT = re.compile(
     r'[-–—:.\s]*\s*([IVXLCDM]+|\d+)\b'
 )
 RE_ROMAN_UNIT = re.compile(
-    r'(?im)^[\s\u00a0\t]*([IVXLCDM]+)[\.\)]\s+([A-Z][A-Z0-9\s,\-–\(\)]+)'
+    r'(?m)^[ \t\u00a0]*([IVXLCDM]+)[\.\)][ \t]+([A-Z][A-Z0-9 \t,\-–\(\)]+)$'
 )
 RE_CO   = re.compile(r'\b(?:(CO|CLO|LO)\s*[-.]?\s*0*(\d{1,2})|C\d{3,4}\.(\d{1,2}))\b', re.I)
 RE_PO   = re.compile(r'\b(PO|PLO|PEO|GA)\s*[-.]?\s*0*(\d{1,2})\b', re.I)
@@ -170,7 +188,7 @@ RE_PSO  = re.compile(r'\b(PSO|PSO-)\s*[-.]?\s*0*(\d{1,2})\b', re.I)
 RE_LTPC = re.compile(r'(?i)\bL\s*[-/:\s]\s*T\s*[-/:\s]\s*P\b')
 RE_LTPC_VALS = re.compile(r'(\d+)\s*[-/:\s]\s*(\d+)\s*[-/:\s]\s*(\d+)(?:\s*[-/:\s]\s*(\d+))?')
 RE_CREDITS   = re.compile(r'(?i)credits?\s*[:\-]?\s*(\d+(?:\.\d+)?)')
-RE_HOURS     = re.compile(r'(?i)\b(\d{1,3})\s*(?:hr?s?\.?|hours?|periods?)\b')
+RE_HOURS     = re.compile(r'(?i)\b(\d{1,3}(?:\.\d+)?)\s*(?:hr?s?\.?|hours?|periods?)\b')
 RE_YEAR      = re.compile(r'\b(19|20)\d{2}\b')
 RE_EDITION   = re.compile(r'(\d+(?:st|nd|rd|th)?)\s+(?:ed(?:ition)?\.?)', re.I)
 RE_BOOK_NUM  = re.compile(r'^\s*(?:(\d+|[ivxlc]+)[\.\)]?(\s+|$)|(?:Book|Ref|TB|RB)\s*\d+[\.\:\-]?\s*)', re.I)
@@ -183,6 +201,44 @@ RE_REFBOOK   = re.compile(
     r'(?im)^\s*(reference\s*books?(?:\s*\(s\))?|references?|suggested\s*readings?|'
     r'additional\s*readings?|supplementary\s*(?:readings?|texts?)|recommended\s*(?:books?|texts?|readings?)|reading\s*list|bibliography|online\s*resources?)\s*[:\-]?\s*$'
 )
+
+# Standalone section labels keep prose such as "References to unit 3" inside
+# the syllabus. The same boundaries are used by extraction and coverage checks.
+RE_SECTION_END = re.compile(
+    r'(?im)^[ \t]*(?:(?:course[ \t]+(?:learning[ \t]+)?|expected[ \t]+|learning[ \t]+)outcomes?'
+    r'|(?:programme?|program)[ \t]+(?:specific[ \t]+)?outcomes?'
+    r'|text[ \t]*books?|reference[ \t]*books?|references?|bibliography|reading[ \t]+list'
+    r'|assessment(?:[ \t]+(?:methods?|scheme))?|course[ \t]+designers?'
+    r'|CO[ \t]*[-/][ \t]*PO(?:[ \t]+(?:mapping|matrix|correlation))?'
+    r'|(?:mapping|articulation|correlation)(?:[ \t]+matrix)?)'
+    r'[ \t]*(?:\([^\n]*\))?[ \t]*[:\-]?[ \t]*(?=\n|$)'
+)
+RE_CONTENT_HEADING = re.compile(
+    r'(?im)^[ \t]*(?:syllabus|course[ \t]+(?:contents?|outline|schedule)|weekly[ \t]+schedule|topics)[ \t]*[:\-]?[ \t]*$'
+)
+
+
+def numbered_outline(text: str):
+    """Numbered headings require a content section and at least two blocks.
+
+    This avoids turning numbered outcomes, references or algorithm steps into
+    units merely because they start with a number.
+    """
+    start = RE_CONTENT_HEADING.search(text)
+    if not start:
+        return []
+    end = RE_SECTION_END.search(text, start.end())
+    stop = end.start() if end else len(text)
+    pattern = re.compile(r'(?m)^[ \t]*(\d{1,3}|[IVXLCDM]+)[.)][ \t]+([^\n]{3,100})$')
+    headings = list(pattern.finditer(text, start.end(), stop))
+    if len(headings) < 2:
+        return []
+    numbers = [roman_to_int(m.group(1)) for m in headings]
+    if any(n is None for n in numbers) or numbers != sorted(set(numbers)):
+        return []
+    if any(m.group(2).rstrip().endswith(('.', ';')) for m in headings):
+        return []
+    return headings
 
 # Bloom markers
 RE_K_LEVEL  = re.compile(r'\(?K([1-6])\)?')
@@ -341,7 +397,7 @@ class PDFReader:
                 if len(adapted) > MAX_PAGES:
                     raise PDFReadError(f'Document exceeds {MAX_PAGES} logical pages')
                 for number, page in enumerate(adapted, 1):
-                    text = page['text']
+                    text = _normalize_text(page['text'])
                     self.pages.append(PageInfo(number, text, page['tables'], [], not text.strip()))
                     self.page_diagnostics.append({'page': number, 'method': page['method'], 'characters': len(text),
                                                   'needs_review': not text.strip(), 'warnings': page['warnings']})
@@ -381,6 +437,7 @@ class PDFReader:
                     raise PDFReadError(f'Document exceeds the {MAX_PAGES} page limit; split it into smaller documents.')
                 for i, pg in enumerate(pdf.pages, 1):
                     text = pg.extract_text(x_tolerance=3, y_tolerance=3) or ""
+                    text = _normalize_text(text)
                     tables = []
                     for tbl in (pg.extract_tables() or []):
                         clean = [[str(c or "").strip() for c in row] for row in (tbl or [])]
@@ -414,6 +471,7 @@ class PDFReader:
                     ocr = LocalOCR(self.ocr_budget)
                     for i, pg in enumerate(doc, 1):
                         text, layout, layout_warnings = native_page_text(pg)
+                        text = _normalize_text(text)
                         words = [{"text":w[4],"x0":w[0],"y0":w[1],"x1":w[2],"y1":w[3]}
                                  for w in pg.get_text('words', sort=True)]
                         issues, method, confidence = list(layout_warnings), 'native', None
@@ -424,7 +482,7 @@ class PDFReader:
                         if needs_ocr and (image_area or text.strip()):
                             result, error = ocr.read(pg)
                             if result and len(result['text'].strip()) > len(text.strip()):
-                                text, words, confidence = result['text'], result['words'], result['confidence']
+                                text, words, confidence = _normalize_text(result['text']), result['words'], result['confidence']
                                 method = 'ocr'
                                 issues.append('OCR text must be checked against the original, especially numbers and tables.')
                             if error:
@@ -639,6 +697,19 @@ class CourseDetector:
                         if m_rev:
                             t_try = m_rev.group(1).strip()
                             c_try = m_rev.group(2).strip().upper()
+                            is_label = bool(re.match(r'(?i)^(?:course|subject|paper|module)\s*(?:code|no\.?|number|id)\s*$', t_try))
+                            if not is_label and is_valid_course_code(c_try) and len(t_try) > 3 and sum(c.isalpha() for c in t_try) > len(t_try) * 0.35:
+                                code_cand = c_try
+                                inline_title = t_try
+
+                    # A3. Common catalog layout: "Data Structures (CS101)".
+                    # Parentheses make this unambiguous enough to support both
+                    # long institutional codes and short codes such as CS50.
+                    if not code_cand:
+                        m_bracket = re.match(r'^(.+?)\s*[\(\[]\s*([A-Z0-9.\- ]{2,15})\s*[\)\]]\s*$', line)
+                        if m_bracket:
+                            t_try = m_bracket.group(1).strip()
+                            c_try = m_bracket.group(2).strip().upper()
                             if is_valid_course_code(c_try) and len(t_try) > 3 and sum(c.isalpha() for c in t_try) > len(t_try) * 0.35:
                                 code_cand = c_try
                                 inline_title = t_try
@@ -658,7 +729,7 @@ class CourseDetector:
 
                     # C. Standalone code line
                     if not code_cand:
-                        if len(words) == 1 and (RE_CODE.fullmatch(words[0]) or RE_CODE_DOT.fullmatch(words[0])):
+                        if len(words) == 1 and (RE_CODE.fullmatch(words[0]) or RE_CODE_DOT.fullmatch(words[0]) or is_valid_course_code(words[0])):
                             code_cand = words[0].upper()
                         elif len(words) == 2 and RE_CODE_SPACED.fullmatch(line):
                             code_cand = line.upper()
@@ -672,7 +743,7 @@ class CourseDetector:
                             j = i + 1
                             while j < min(i + 6, len(lines)):
                                 nxt = lines[j]
-                                if re.search(r'(?i)^(category|preamble|prerequisite|course\s*objectives?|course\s*outcomes?|l\b|credit|credits|syllabus)', nxt):
+                                if re.search(r'(?i)^(category|preamble|prerequisite|course\s*objectives?|course\s*outcomes?|l\s*t\s*p(?:\s*c)?\b|l\b|credit|credits|syllabus)', nxt):
                                     break
                                 if sum(c.isalpha() for c in nxt) > len(nxt) * 0.4 and len(nxt) > 2:
                                     title_lines.append(nxt)
@@ -1004,40 +1075,37 @@ class DeepExtractor:
         for _, tbl in self.tables:
             for i, row in enumerate(tbl):
                 cells = [str(c or "").strip().upper() for c in row]
+                aliases = {'LECTURE': 'L', 'TUTORIAL': 'T', 'PRACTICAL': 'P', 'CREDITS': 'C', 'CREDIT': 'C'}
+                cells = [aliases.get(cell, cell) for cell in cells]
                 if 'L' in cells and 'T' in cells and 'P' in cells:
                     if i + 1 < len(tbl):
                         vals = []
-                        for c in tbl[i+1]:
-                            try: vals.append(float(str(c).strip()))
-                            except: pass
-                        if len(vals) >= 3: return vals[:4]
+                        for label in ('L', 'T', 'P', 'C'):
+                            try:
+                                cell = str(tbl[i+1][cells.index(label)] or '').strip()
+                                vals.append(float(cell) if re.fullmatch(r'\d+(?:\.\d+)?', cell) else None)
+                            except (ValueError, IndexError):
+                                vals.append(None)
+                        if all(v is not None for v in vals[:3]):
+                            return vals
 
         # Text: L T P C or L T P Credit followed by numbers
         m = re.search(r'(?i)\bL\s*[\n\t\s/:-]*T\s*[\n\t\s/:-]*P(?:\s*[\n\t\s/:-]*C(?:redits?)?)?\b', text)
         if m:
             after = text[m.end():m.end()+150]
-            m_tuple = re.search(r'\b(\d{1,2})\s*[-/:\s]\s*(\d{1,2})\s*[-/:\s]\s*(\d{1,2})(?:\s*[-/:\s]\s*(\d{1,2}(?:\.\d+)?))?\b', after)
+            m_tuple = re.match(r'\s*[:|]?\s*(\d{1,2}(?:\.\d+)?)\s*[-/:\s]\s*(\d{1,2}(?:\.\d+)?)\s*[-/:\s]\s*(\d{1,2}(?:\.\d+)?)(?:\s*[-/:\s]\s*(\d{1,2}(?:\.\d+)?))?\b', after)
             if m_tuple:
                 vals = [float(m_tuple.group(i)) for i in range(1, 5) if m_tuple.group(i) is not None]
                 if len(vals) >= 3:
                     return vals[:4]
-            nums = re.findall(r'\b\d+\b', after)
-            if len(nums) >= 3:
-                return [int(x) for x in nums[:4]]
 
         # Inline L: 3, T: 0, P: 0
-        l_m = re.search(r'(?i)\bL(?:ecture)?\s*[:\-]?\s*(\d+)', text)
-        t_m = re.search(r'(?i)\bT(?:utorial)?\s*[:\-]?\s*(\d+)', text)
-        p_m = re.search(r'(?i)\bP(?:ractical)?\s*[:\-]?\s*(\d+)', text)
-        c_m = re.search(r'(?i)\bC(?:redits?)?\s*[:\-]?\s*(\d+)', text)
+        l_m = re.search(r'(?i)\bL(?:ecture)?\s*[:\-]\s*(\d+(?:\.\d+)?)', text)
+        t_m = re.search(r'(?i)\bT(?:utorial)?\s*[:\-]\s*(\d+(?:\.\d+)?)', text)
+        p_m = re.search(r'(?i)\bP(?:ractical)?\s*[:\-]\s*(\d+(?:\.\d+)?)', text)
+        c_m = re.search(r'(?i)\bC(?:redits?)?\s*[:\-]\s*(\d+(?:\.\d+)?)', text)
         if l_m and t_m and p_m:
-            return [int(l_m.group(1)), int(t_m.group(1)), int(p_m.group(1)), int(c_m.group(1)) if c_m else None]
-
-        # Tuple like "3 0 0 3"
-        mv = RE_LTPC_VALS.search(text[:2000])
-        if mv:
-            vals = [int(mv.group(i)) for i in range(1,5) if mv.group(i)]
-            if len(vals) >= 3: return vals
+            return [float(l_m.group(1)), float(t_m.group(1)), float(p_m.group(1)), float(c_m.group(1)) if c_m else None]
         return None
 
     # ── Units ────────────────────────────────────────────────────────
@@ -1045,11 +1113,22 @@ class DeepExtractor:
         text   = self.text
         units  = []
         matches = list(RE_UNIT.finditer(text))
+        tbl_units = self._units_from_table()
+        table_numbers = {u['number'] for u in tbl_units}
+        if tbl_units and all(roman_to_int(m.group(2)) in table_numbers for m in matches):
+            return tbl_units
 
         if not matches:
-            # Fallback A: Units from structured syllabus table
-            tbl_units = self._units_from_table()
-            if tbl_units: return tbl_units
+            outline = numbered_outline(text)
+            if outline:
+                section_end = RE_SECTION_END.search(text, outline[-1].end())
+                for index, heading in enumerate(outline):
+                    number = roman_to_int(heading.group(1))
+                    end = outline[index+1].start() if index+1 < len(outline) else (section_end.start() if section_end else len(text))
+                    body = self._trim_unit_body(text[heading.end():end].strip())
+                    units.append({'number': number, 'title': heading.group(2).strip(), 'hours': None,
+                                  'text': body, 'topics': self._split_topics(body, number)})
+                return units
 
             # Fallback B: Roman numeral headings e.g. I. LINEAR STRUCTURES
             roman_matches = list(RE_ROMAN_UNIT.finditer(text))
@@ -1134,7 +1213,13 @@ class DeepExtractor:
             body_end   = matches[i+1].start() if i+1 < len(matches) else len(text)
             raw_seg    = text[body_start:body_end]
 
-            title, hours, body = self._parse_unit_segment(raw_seg)
+            table_unit = next((u for u in tbl_units if u['number'] == num), None)
+            if table_unit:
+                if not any(u['number'] == num for u in units):
+                    units.append(table_unit)
+                continue
+            inline_heading = bool(raw_seg.split('\n', 1)[0].strip(' \t:-–—.'))
+            title, hours, body = self._parse_unit_segment(raw_seg, inline_heading=inline_heading)
 
             body    = self._trim_unit_body(body)
             if hours is None:
@@ -1149,15 +1234,45 @@ class DeepExtractor:
                 "topics": topics,
             })
 
+        units.extend(u for u in tbl_units if not any(existing['number'] == u['number'] for existing in units))
         return units
 
-    def _parse_unit_segment(self, raw_seg: str) -> Tuple[str, Optional[int], str]:
+    def _parse_unit_segment(self, raw_seg: str, inline_heading=False) -> Tuple[str, Optional[float], str]:
         text = raw_seg.strip()
         title = ""
         hours = None
         body = text
 
         text = re.sub(r'^[\s\-–—:.]+', '', text).strip()
+
+        first_line, newline, remainder = text.partition('\n')
+        # A title on the same line as a printed unit label need not be English
+        # or ALL CAPS. Keep its original spelling and script.
+        if newline and 1 < len(first_line) <= 140 and not first_line.endswith(('.', ';', ',')):
+            leading_hours = re.match(r'^[\[(]\s*(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|periods?)\s*[\])]\s*[:\-]?\s*(.+)$', first_line, re.I)
+            trailing_hours = re.search(r'\s*[-:–—]?\s*[\[(]?\s*(\d+(?:\.\d+)?)\s*(?:hours?|hrs?|periods?)\s*[\])]?\s*$', first_line, re.I)
+            if leading_hours:
+                return leading_hours.group(2).strip(), float(leading_hours.group(1)), remainder.strip()
+            if inline_heading or first_line.isupper() or first_line.istitle():
+                if trailing_hours:
+                    return first_line[:trailing_hours.start()].strip(' -:–—'), float(trailing_hours.group(1)), remainder.strip()
+                bare_hours = re.search(r'\s+(\d{1,3}(?:\.\d+)?)$', first_line)
+                if bare_hours and first_line[:bare_hours.start()].isupper():
+                    return first_line[:bare_hours.start()].strip(), float(bare_hours.group(1)), remainder.strip()
+                return first_line.strip(), None, remainder.strip()
+
+        # Some handbooks print the workload before the title, e.g.
+        # "UNIT 2 (6 hours): SORTING".  Preserve both fields rather than
+        # treating the workload annotation as the unit title.
+        m_hours_first = re.match(
+            r'^\s*[\(\[]\s*(\d{1,3})\s*(?:hr?s?\.?|hours?|periods?)\s*[\)\]]\s*[:\-–—]?\s*'
+            r'([A-Z][A-Z0-9 \t,\-–—/&]{2,80})(?:\n|\s{2,})(.*)$',
+            text, re.DOTALL,
+        )
+        if m_hours_first:
+            title = m_hours_first.group(2).strip(' -–—:.')
+            body = m_hours_first.group(3).strip()
+            return title, int(m_hours_first.group(1)), body
 
         # Pattern 1: Inline ALL-CAPS title followed by hours and sentence/topics
         m_inline = re.match(
@@ -1208,61 +1323,75 @@ class DeepExtractor:
         return title, hours, body
 
     def _units_from_table(self) -> List[Dict]:
+        res = []
+        columns = None
         for _, tbl in self.tables:
             if not tbl or len(tbl) < 2: continue
             hdr = [str(c or "").strip().lower() for c in tbl[0]]
             if any(k in ' '.join(hdr) for k in ['faculty', 'designation', 'designer', 'mail id']): continue
-            unit_col = next((i for i, h in enumerate(hdr) if any(k in h for k in ['unit', 'module', 'chapter', 'part', 's.no', 'no.'])), None)
+            unit_col = next((i for i, h in enumerate(hdr) if any(k in h for k in ['unit', 'module', 'chapter', 'part', 'week', 'lesson', 's.no', 'no.'])), None)
             content_col = next((i for i, h in enumerate(hdr) if any(k in h for k in ['content', 'contents', 'syllabus', 'topics', 'description', 'course content', 'details'])), None)
             hours_col = next((i for i, h in enumerate(hdr) if any(k in h for k in ['hours', 'hrs', 'periods', 'contact hours'])), None)
             title_col = next((i for i, h in enumerate(hdr) if any(k in h for k in ['title', 'unit title', 'module title', 'name'])), None)
             if unit_col is not None and content_col is not None and unit_col != content_col:
-                res = []
-                for row_idx, row in enumerate(tbl[1:], 1):
+                columns = (unit_col, content_col, hours_col, title_col, len(hdr))
+                rows = tbl[1:]
+            elif columns and len(hdr) == columns[4]:
+                # A table split across a page sometimes omits the second header.
+                unit_col, content_col, hours_col, title_col, _ = columns
+                first_label = hdr[unit_col].upper()
+                if first_label and not re.fullmatch(r'(?:UNIT|MODULE|WEEK)?\s*(?:\d+|[IVXLCDM]+)', first_label):
+                    columns = None
+                    continue
+                rows = tbl
+            else:
+                columns = None
+                continue
+            for row in rows:
                     if unit_col < len(row) and content_col < len(row):
                         u_raw = str(row[unit_col] or "").strip()
-                        num = roman_to_int(u_raw) or row_idx
+                        if re.match(r'(?i)^(?:total|unit|module|week|s\.?no)\s*$', u_raw):
+                            continue
+                        label = re.sub(r'(?i)^(?:unit|module|chapter|week|lesson)\s*[-:]?\s*', '', u_raw)
+                        num = roman_to_int(label)
                         u_title = str(row[title_col] or "").strip() if title_col is not None and title_col < len(row) else ""
                         body = str(row[content_col] or "").strip()
-                        if len(body) > 10:
+                        if not u_raw and res and body:
+                            res[-1]['text'] += '\n' + body
+                            continue
+                        if num and body:
                             u_hrs = None
                             if hours_col is not None and hours_col < len(row):
-                                u_hrs = self._hours(str(row[hours_col] or ""))
-                            if not u_hrs:
-                                u_hrs = self._hours(body)
+                                hour_cell = str(row[hours_col] or '').strip()
+                                u_hrs = float(hour_cell) if re.fullmatch(r'\d+(?:\.\d+)?', hour_cell) else self._hours(hour_cell)
+                            existing = next((unit for unit in res if unit['number'] == num), None)
+                            if existing:
+                                if body not in existing['text']:
+                                    existing['text'] += '\n' + body
+                                continue
                             res.append({
                                 "number": num,
                                 "title": u_title,
                                 "hours": u_hrs,
                                 "text": body,
-                                "topics": self._split_topics(body, num)
+                                "topics": []
                             })
-                if len(res) >= 2:
-                    return res
-        return []
+        for unit in res:
+            unit['topics'] = self._split_topics(unit['text'], unit['number'])
+        return res
 
     def _trim_unit_body(self, text: str) -> str:
         """Cut off CO/PO/books/matrix that leaks into unit body."""
         text = re.sub(r'(?i)\bTotal\s*[:\-]?\s*\d+\s*(?:hr?s?|hours?|periods?)[^\n.]*', '', text).strip()
-        stops = [
-            r'(?i)(?:^|[\n\r]|(?<=[.;:\s]))(?:Course\s+Outcomes?|CO\s*[:\-])',
-            r'(?i)(?:^|[\n\r]|(?<=[.;:\s]))(?:Programme\s+Outcomes?|Program\s+Outcomes?)',
-            r'(?i)(?:^|[\n\r]|(?<=[.;:\s]))(?:Text\s*Books?|Reference\s*Books?|References?)\s*[:\-]?',
-            r'(?i)(?:^|[\n\r]|(?<=[.;:\s]))(?:CO\s*[-/]?\s*PO|Mapping|Articulation|Correlation)',
-            r'(?i)(?:^|[\n\r]|(?<=[.;:\s]))(?:UNIT|MODULE|PART|CHAPTER|SECTION|WEEK|SESSION)\s*[-–—:.\s]*\s*(?:[IVXLCDM]+|\d+)\b',
-        ]
-        cut = len(text)
-        for pat in stops:
-            m = re.search(pat, text)
-            if m and m.start() < cut:
-                cut = m.start()
+        marker = RE_SECTION_END.search(text)
+        cut = marker.start() if marker else len(text)
         return text[:cut].strip()
 
-    def _hours(self, text: str) -> Optional[int]:
+    def _hours(self, text: str) -> Optional[float]:
         if not text: return None
         # 1. Explicit hours / periods (e.g. "9 hrs", "9 hours", "9 periods")
         m = RE_HOURS.search(text)
-        if m: return int(m.group(1))
+        if m: return float(m.group(1))
 
         # 2. Keyed pattern (e.g. "Hours: 9", "Periods: 8", "Contact Hours : 9")
         m_key = re.search(r'(?i)\b(?:hours?|periods?|contact\s*hours?|no\.?\s*of\s*(?:hours?|periods?))\s*[:\-]?\s*(\d{1,3})\b', text)
@@ -1544,7 +1673,17 @@ class DeepExtractor:
                 co_id = f"CO{num_idx}"
                 raw_text = m.group(2).strip()
                 item = self._clean_outcome_item(co_id, raw_text)
-                if item: outcomes.append(item)
+                if item:
+                    item['id_source'] = 'numbered_list'
+                    outcomes.append(item)
+
+        if not outcomes:
+            bullet_pat = re.compile(r'(?:^|\n)[ \t]*[•●▪\-–][ \t]+(.+?)(?=\n[ \t]*[•●▪\-–][ \t]+|\Z)', re.S)
+            for index, match in enumerate(bullet_pat.finditer(section), 1):
+                item = self._clean_outcome_item(f'CO{index}', match.group(1).strip())
+                if item:
+                    item['id_source'] = 'generated_from_bullet'
+                    outcomes.append(item)
 
         if not outcomes:
             self.not_extracted.append("course_outcomes — CO items could not be parsed from section")
@@ -1587,7 +1726,7 @@ class DeepExtractor:
         co_text = re.sub(r'\s+', ' ', co_text).strip().rstrip('.,;')
         # Also strip any inline (K1)-(K6) markers from the text body
         co_text = re.sub(r'\s*\(?K[1-6]\)?', '', co_text).strip().rstrip('.,;')
-        if len(co_text) < 5: return None
+        if len(co_text) < 5 or not any(char.isalpha() for char in co_text): return None
 
         if not bloom:
             pb = detect_printed_bloom(co_text)
@@ -1604,26 +1743,21 @@ class DeepExtractor:
         }
 
     def _co_section(self, text: str) -> str:
-        patterns = [
-            r'(?i)(?:Course\s+(?:Learning\s+)?Outcomes?|Expected\s+Outcomes?)[^\n]*\n(.*?)'
-            r'(?=\n\s*(?:Programme|Program|CO\s*[-/]?\s*PO|MAPPING|SYLLABUS|UNIT|Text\s*Books?|Reference|\Z))',
-            r'(?i)(?:COs?\s*[:\-][^\n]*)\n(.*?)(?=\n\s*(?:Programme|Program|CO\s*[-/]?\s*PO|MAPPING|SYLLABUS|UNIT|Text|Reference|\Z))',
-            # Fallback: look for "Learning Outcomes" or "Objectives" sections
-            r'(?i)(?:Learning\s+Outcomes?|Course\s+Objectives?)[^\n]*\n(.*?)'
-            r'(?=\n\s*(?:Programme|Program|CO\s*[-/]?\s*PO|MAPPING|SYLLABUS|UNIT|Text|Reference|\Z))',
-        ]
-        for pat in patterns:
-            m = re.search(pat, text, re.DOTALL)
-            if m: return m.group(1)
-        # Fallback hits: only take CO occurrences BEFORE any matrix, mapping, or syllabus header
-        m_map = re.search(r'(?i)\b(?:MAPPING|CO\s*[-/]?\s*PO|SYLLABUS)\b', text)
-        search_region = text[:m_map.start()] if m_map else text
-        hits = list(RE_CO.finditer(search_region))
-        if len(hits) >= 2:
-            s = max(0, hits[0].start() - 60)
-            e = min(len(search_region), hits[-1].end() + 400)
-            return search_region[s:e]
-        return ""
+        heading = re.search(
+            r'(?im)^[ \t]*(?:(?:course[ \t]+(?:learning[ \t]+)?|expected[ \t]+|learning[ \t]+)outcomes?|COs?)'
+            r'[ \t]*(?:\([^\n]*?\))?[ \t]*(?:[:\-][ \t]*|(?=\n|$))', text)
+        if heading:
+            start = heading.end()
+        else:
+            # Explicit outcome IDs can stand alone without a section label.
+            # Require prose after the ID; numeric matrix rows are not outcomes.
+            heading = re.search(r'(?im)^[ \t]*(?:(?:CO|CLO|LO)[ \t]*[-.]?[ \t]*\d{1,2}|C\d{3,4}\.\d{1,2})[ \t]*[:.\-]?[ \t]+(?=[^\n]*[^\W\d_])', text)
+            if not heading:
+                return ''
+            start = heading.start()
+        stops = [pattern.search(text, start) for pattern in (RE_UNIT, RE_SECTION_END, RE_CONTENT_HEADING)]
+        stop = min((match.start() for match in stops if match), default=len(text))
+        return text[start:stop].strip()
 
     # ── Programme Outcomes ───────────────────────────────────────────
     def extract_programme_outcomes(self) -> List[Dict]:
@@ -1730,12 +1864,8 @@ class DeepExtractor:
 
     # ── CO-PO Matrix ─────────────────────────────────────────────────
     def extract_matrix(self) -> Dict[str, Dict[str, str]]:
-        # Try table first (most reliable)
-        for pnum, tbl in self.tables:
-            result = self._matrix_from_table(tbl)
-            if result: return result
-
-        # Multi-page matrix stitch
+        # Combine every table before returning; the first table may contain
+        # only half the outcomes or only the first group of PO columns.
         multi = self._stitch_matrix_tables()
         if multi: return multi
 
@@ -1829,13 +1959,17 @@ class DeepExtractor:
     def _stitch_matrix_tables(self) -> Dict:
         """Stitch multi-page matrix by aligning CO row keys."""
         all_pages = [(pn, tbl) for pn, tbl in self.tables]
-        if len(all_pages) < 2: return {}
+        if not all_pages: return {}
         combined: Dict[str, Dict[str, str]] = {}
         for _, tbl in all_pages:
             part = self._matrix_from_table(tbl)
             for co, row in part.items():
                 if co not in combined: combined[co] = {}
-                combined[co].update(row)
+                for po, value in row.items():
+                    if po in combined[co] and combined[co][po] != value:
+                        self.not_extracted.append(f'co_po_matrix — conflicting values for {co}/{po}; first printed value retained for review')
+                    else:
+                        combined[co][po] = value
         combined = {co: r for co, r in combined.items() if r}
         return combined if len(combined) > 0 else {}
 
@@ -2053,6 +2187,187 @@ def _course_cache_set(key: str, candidates: List['CourseCandidate']):
         while len(_GLOBAL_COURSE_DETECTOR_CACHE) > _COURSE_CACHE_MAX_ITEMS:
             _GLOBAL_COURSE_DETECTOR_CACHE.popitem(last=False)
 
+
+# ══════════════════════════════════════════════════════════════════════
+#  SOURCE-GROUNDED OUTPUT AUDIT
+# ══════════════════════════════════════════════════════════════════════
+
+def _evidence_key(value: Any) -> str:
+    """Preserve Unicode letters, marks and token boundaries during matching."""
+    text = unicodedata.normalize('NFKC', str(value or '')).casefold()
+    text = re.sub(r'(?<=\w)-[ \t]*\n[ \t]*(?=\w)', '', text)
+    text = re.sub(r'\b(co|clo|lo|po|plo|pso|peo)[ \t]*[-.]?[ \t]*0*(\d{1,2})\b', r'\1\2', text)
+    text = ''.join(char if unicodedata.category(char)[0] in 'LNM' else ' ' for char in text)
+    return ' '.join(text.split())
+
+
+def _has_source_evidence(value: Any, corpus: str) -> bool:
+    query = _evidence_key(value)
+    return bool(query) and f' {query} ' in f' {_evidence_key(corpus)} '
+
+
+def audit_extraction_output(result: Dict, scoped_text: str,
+                            document_text: Optional[str] = None) -> Dict:
+    """Audit extracted values against the local source, never against model guesses.
+
+    This intentionally reports uncertainty instead of deleting output: a PDF may
+    encode a table or a scanned page in a way that makes exact local evidence
+    unavailable even when the value is correct.  Consumers can therefore show a
+    review requirement rather than presenting an unsupported field as certain.
+    """
+    result = result if isinstance(result, dict) else {}
+    scoped_text = str(scoped_text or '')
+    document_text = str(document_text or scoped_text)
+    issues: List[Dict[str, str]] = []
+    verified = 0
+    checked = 0
+    normalized_sources = {}
+
+    def check(field: str, value: Any, corpus: str, required: bool = False):
+        nonlocal verified, checked
+        if value is None or not str(value).strip():
+            if required:
+                issues.append({'field': field, 'reason': 'missing_from_output'})
+            return
+        checked += 1
+        if corpus not in normalized_sources:
+            normalized_sources[corpus] = ' ' + _evidence_key(corpus) + ' '
+        query = _evidence_key(value)
+        if query and f' {query} ' in normalized_sources[corpus]:
+            verified += 1
+        else:
+            issues.append({'field': field, 'reason': 'not_found_in_source_scope'})
+
+    course = result.get('course') if isinstance(result.get('course'), dict) else {}
+    check('course.code', course.get('code'), scoped_text)
+    check('course.title', course.get('title'), scoped_text, required=not course.get('code'))
+
+    units = result.get('units') if isinstance(result.get('units'), list) else []
+    if not units:
+        issues.append({'field': 'units', 'reason': 'no_structured_units_extracted'})
+    seen_numbers = set()
+    previous_number = 0
+    for index, unit in enumerate(units, 1):
+        if not isinstance(unit, dict):
+            issues.append({'field': f'units[{index}]', 'reason': 'invalid_unit_object'})
+            continue
+        number = unit.get('number')
+        try:
+            number = int(number)
+        except (TypeError, ValueError):
+            issues.append({'field': f'units[{index}].number', 'reason': 'invalid_unit_number'})
+            number = None
+        if number is not None:
+            if number in seen_numbers:
+                issues.append({'field': f'units[{index}].number', 'reason': 'duplicate_unit_number'})
+            if number < previous_number:
+                issues.append({'field': f'units[{index}].number', 'reason': 'unit_order_is_not_monotonic'})
+            seen_numbers.add(number)
+            previous_number = max(previous_number, number)
+        check(f'units[{index}].title', unit.get('title'), scoped_text)
+        check(f'units[{index}].text', unit.get('text'), scoped_text, required=True)
+        unit_text = str(unit.get('text') or '')
+        topics = unit.get('topics') if isinstance(unit.get('topics'), list) else []
+        for topic_index, topic in enumerate(topics, 1):
+            if isinstance(topic, dict):
+                check(f'units[{index}].topics[{topic_index}].text', topic.get('text'), unit_text, required=True)
+        def content_tokens(text):
+            return Counter(token for token in _evidence_key(text).split()
+                           if not token.isdecimal() and not re.fullmatch(r'(?:k|bt|bl|l)[1-6]', token))
+        body_tokens = content_tokens(unit_text)
+        topic_tokens = content_tokens(' '.join(str(t.get('text') or '') for t in topics if isinstance(t, dict)))
+        missing_tokens = body_tokens - topic_tokens
+        if missing_tokens:
+            issues.append({'field': f'units[{index}].topics', 'reason': 'unit_body_not_covered_by_topics'})
+
+    source_numbers = {roman_to_int(match.group(2)) for match in RE_UNIT.finditer(scoped_text)}
+    source_numbers.update(roman_to_int(match.group(1)) for match in numbered_outline(scoped_text))
+    for number in sorted(n for n in source_numbers if n is not None and n not in seen_numbers):
+        issues.append({'field': f'units[number={number}]', 'reason': 'source_unit_missing_from_output'})
+
+    outcomes = result.get('course_outcomes') if isinstance(result.get('course_outcomes'), list) else []
+    for index, outcome in enumerate(outcomes, 1):
+        if isinstance(outcome, dict):
+            if outcome.get('id_source') not in {'numbered_list', 'generated_from_bullet'}:
+                check(f'course_outcomes[{index}].id', outcome.get('id'), scoped_text, required=True)
+            check(f'course_outcomes[{index}].text', outcome.get('text'), scoped_text, required=True)
+    extracted_ids = {normalize_id(o.get('id') or '') for o in outcomes if isinstance(o, dict)}
+    for line in scoped_text.splitlines():
+        match = RE_CO.match(line.strip())
+        if match and sum(char.isalpha() for char in line[match.end():]) > 8:
+            identifier = normalize_id(match.group(0))
+            if identifier not in extracted_ids:
+                issues.append({'field': f'course_outcomes[id={identifier}]', 'reason': 'source_outcome_missing_from_output'})
+
+    # Programme outcomes often appear in a shared institutional section outside
+    # the course page range, so their evidence scope is the whole document.
+    programme_outcomes = result.get('programme_outcomes') if isinstance(result.get('programme_outcomes'), list) else []
+    for index, outcome in enumerate(programme_outcomes, 1):
+        if isinstance(outcome, dict):
+            check(f'programme_outcomes[{index}].id', outcome.get('id'), document_text, required=True)
+            check(f'programme_outcomes[{index}].text', outcome.get('text'), document_text, required=True)
+
+    books = result.get('books') if isinstance(result.get('books'), list) else []
+    for index, book in enumerate(books, 1):
+        if isinstance(book, dict):
+            check(f'books[{index}].title', book.get('title'), scoped_text, required=True)
+            for field in ('author', 'publisher', 'edition', 'year'):
+                check(f'books[{index}].{field}', book.get(field), scoped_text)
+
+    matrix = result.get('co_po_matrix') if isinstance(result.get('co_po_matrix'), dict) else {}
+    for co_id, row in matrix.items():
+        check(f'co_po_matrix.{co_id}', co_id, scoped_text, required=True)
+        if isinstance(row, dict):
+            for po_id, mapping in row.items():
+                check(f'co_po_matrix.{co_id}.{po_id}', po_id, scoped_text, required=True)
+                if str(mapping or '').strip() not in {'1', '2', '3', 'S', 'M', 'L', 'H'}:
+                    issues.append({'field': f'co_po_matrix.{co_id}.{po_id}', 'reason': 'unrecognized_mapping_value'})
+
+    # Bound response size while preserving a useful count for very damaged OCR.
+    shown_issues = issues[:60]
+    status = 'verified' if not issues else 'review_required'
+    return {
+        'status': status,
+        'method': 'local_source_evidence',
+        'summary': {
+            'checked_values': checked,
+            'verified_values': verified,
+            'review_required_values': len(issues),
+            'unit_count': len(units),
+            'outcome_count': len(outcomes),
+        },
+        'issues': shown_issues,
+        'issues_truncated': len(issues) > len(shown_issues),
+        'checked_fields': ['course identity', 'unit titles and bodies', 'topic coverage', 'outcome text and printed IDs', 'book fields', 'matrix identifiers and allowed values'],
+        'not_checked': ['numeric workload associations', 'matrix cell alignment', 'visual OCR accuracy', 'unrecognized section styles'],
+        'note': 'Checks compare extracted text and recognizable headings with the source. They do not establish complete extraction or visual accuracy; see not_checked.',
+    }
+
+
+def audit_catalog_output(courses: Any, document_text: str) -> Dict:
+    """Source audit for Task 1 course identities."""
+    courses = courses if isinstance(courses, list) else []
+    issues = []
+    if not courses:
+        issues.append({'field': 'courses', 'reason': 'no_course_identity_extracted'})
+    for index, item in enumerate(courses, 1):
+        if not isinstance(item, dict):
+            issues.append({'field': f'courses[{index}]', 'reason': 'invalid_course_object'})
+            continue
+        for field in ('code', 'title'):
+            value = item.get(field)
+            if value and not _has_source_evidence(value, document_text):
+                issues.append({'field': f'courses[{index}].{field}', 'reason': 'not_found_in_source_scope'})
+        if not item.get('code') and not item.get('title'):
+            issues.append({'field': f'courses[{index}]', 'reason': 'missing_course_identity'})
+    return {
+        'status': 'verified' if not issues else 'review_required',
+        'method': 'local_source_evidence',
+        'summary': {'course_count': len(courses), 'review_required_values': len(issues)},
+        'issues': issues[:60],
+        'issues_truncated': len(issues) > 60,
+    }
+
 def run_task1(pdf_path: str, hints: Dict = None, _reader=None) -> Dict:
     hints    = hints or {}
     reader   = _reader or PDFReader(pdf_path)
@@ -2067,12 +2382,16 @@ def run_task1(pdf_path: str, hints: Dict = None, _reader=None) -> Dict:
     courses = [{"code": c.code, "title": c.title, "page": c.page}
                for c in cands]
 
-    return {
+    result = {
         "document":     Path(pdf_path).name,
         "course_count": len(courses),
         "courses":      courses,
         "_source":      source_report(reader),
     }
+    # Catalog output is also source-checked so a detected course is never
+    # silently represented as a confirmed identity when its text is absent.
+    result['_audit'] = audit_catalog_output(courses, reader.full_text())
+    return result
 
 def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
               debug: bool = False, _reader=None, _include_text=False) -> Dict:
@@ -2176,7 +2495,7 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
         pattern = r'(?im)^[ \t]*(?:(?:course|subject|paper)\s*(?:code|title|name|number|no\.?)\s*[:\-]\s*)?' + identity_pattern + r'(?=\s|$|[:\-])'
         match = re.search(pattern, text)
         if not match and candidate.code and candidate.title:
-            match = re.search(r'(?im)^[ \t]*' + re.escape(candidate.title) + r'\s*[-–—:|]*\s*' + identity_pattern + r'\b', text)
+            match = re.search(r'(?im)^[ \t]*' + re.escape(candidate.title) + r'\s*[-–—:|\[(]*\s*' + identity_pattern + r'\b', text)
         return match.start() if match else None
 
     pieces, used_pages = [], []
@@ -2224,10 +2543,23 @@ def run_task2(pdf_path: str, course_id: str, hints: Dict = None,
         "not_extracted":      sorted(set(ext.not_extracted)),
         "_source":            source_report(reader),
     }
+    table_evidence = '\n'.join(
+        ' '.join(str(cell or '') for cell in row)
+        for _, table in ext.tables for row in table
+    )
+    result['_audit'] = audit_extraction_output(
+        result,
+        ext.text + '\n' + table_evidence,
+        reader.full_text(),
+    )
     result['_quality'] = {
-        'status': 'review_required' if ext.not_extracted or any(reader.page_diagnostics[p-1]['needs_review'] for p in used_pages) else 'parsed',
+        'status': 'review_required' if (
+            ext.not_extracted
+            or result['_audit']['status'] != 'verified'
+            or any(reader.page_diagnostics[p-1]['needs_review'] for p in used_pages)
+        ) else 'parsed',
         'source_pages': used_pages, 'unit_count': len(units), 'outcome_count': len(cos),
-        'note': 'Parsed fields are not a guarantee of completeness. Review source pages and inferred Bloom levels.',
+        'note': 'Parsed fields are not a guarantee of completeness. Review source pages, audit issues, and inferred Bloom levels.',
     }
     if _include_text:
         result['_page_text'] = dict(zip(used_pages, pieces))

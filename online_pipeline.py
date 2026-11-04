@@ -270,7 +270,7 @@ def run(path, course, hints, client, budget=REQUEST_SECONDS):
                 if len(text.strip()) < len(page.text.strip()):
                     warnings.append(f'Vision produced less text on page {page.number}; retained the local reading.')
                     continue
-                page.text, page.is_scanned = text, False
+                page.text, page.is_scanned = sylex._normalize_text(text), False
                 reader.page_diagnostics[page.number-1].update(method='cloud_vision', characters=len(text), needs_review=True,
                     warnings=['Cloud vision transcription requires visual checking against the original page.'])
                 vision_pages.append(page.number)
@@ -280,6 +280,7 @@ def run(path, course, hints, client, budget=REQUEST_SECONDS):
         catalog = sylex.run_task1(path, hints, _reader=reader)
         baseline = sylex.run_task2(path, course, hints, _reader=reader, _include_text=True) if course else catalog
         scope = baseline.pop('_page_text', None) if course else None
+        audit_scope = scope
         pages = scope or {p.number: p.text for p in reader.pages}
         outside_review = [p for p in pages if not review_start <= p <= review_end]
         pages = {p: text for p, text in pages.items() if review_start <= p <= review_end}
@@ -330,7 +331,8 @@ def run(path, course, hints, client, budget=REQUEST_SECONDS):
                 resolved_hints = dict(hints or {})
                 resolved_hints['courses'] = sorted(known.values(), key=lambda c: c['page'])
                 baseline = sylex.run_task2(path, course, resolved_hints, _reader=reader, _include_text=True)
-                pages = {p: text for p, text in baseline.pop('_page_text', {}).items() if review_start <= p <= review_end}
+                audit_scope = baseline.pop('_page_text', {})
+                pages = {p: text for p, text in audit_scope.items() if review_start <= p <= review_end}
         if course:
             result = merge_detail(baseline, proposals, pages, audit)
         else:
@@ -359,8 +361,17 @@ def run(path, course, hints, client, budget=REQUEST_SECONDS):
         result['_processing'] = {'requested_mode': 'online', 'used_mode': 'online' if used_cloud else 'offline', 'fallback': not used_cloud,
             'reason': ('Cloud review returned with warnings; check page coverage and source evidence.' if warnings else 'Cloud review completed; additions were checked against source text.') if used_cloud else 'Cloud unavailable or returned no valid review; local extraction preserved.'}
         if course:
-            result['_quality'] = {**result.get('_quality', {}), 'status': 'review_required' if warnings or result.get('not_extracted') or result['_source']['review_pages'] else 'parsed',
+            # Re-run the same local audit after source-backed cloud additions.
+            # The baseline audit predates merged proposals, so retaining it
+            # would make the online result appear more certain than it is.
+            scoped_source = '\n'.join((audit_scope or {}).values())
+            result['_audit'] = sylex.audit_extraction_output(result, scoped_source, reader.full_text())
+            result['_quality'] = {**result.get('_quality', {}), 'status': 'review_required' if warnings or result.get('not_extracted') or result['_source']['review_pages'] or result['_audit']['status'] != 'verified' else 'parsed',
                 'note': 'Cloud proposals are checked against readable page text, not against visual truth. OCR, conflicts and missing sections still require review.'}
+        else:
+            # Include identities discovered by a source-checked cloud proposal
+            # in the catalog audit instead of retaining the pre-review audit.
+            result['_audit'] = sylex.audit_catalog_output(result.get('courses'), reader.full_text())
         return result
     finally:
         reader.close()
