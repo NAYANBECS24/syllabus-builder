@@ -86,7 +86,7 @@ def read_non_pdf(path):
     if extension in {'.txt', '.md'}:
         raw = Path(path).read_bytes()
         validate_document(raw, path)
-        text = raw.decode('utf-8-sig')
+        text = raw.decode('utf-8-sig').replace('\r\n', '\n').replace('\r', '\n')
         if extension == '.md':
             text = re.sub(r'(?m)^#{1,6}\s+', '', text)
         return [{'text': chunk, 'tables': [], 'method': 'text', 'warnings': []}

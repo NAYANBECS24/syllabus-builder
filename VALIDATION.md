@@ -1,5 +1,15 @@
 ﻿# Validation record — 2 November 2026
 
+## Universal layout hardening — 6 November 2026
+
+- 92 Python tests and 21 JavaScript tests passed on the complete repository.
+- Added generated layout cases for multi-page syllabus tables, blank continuation rows, reordered L/T/P/C columns, fractional workload values, numbered course outlines, bracketed course headers, courses sharing one page, and sentence-case or non-Latin unit titles.
+- Course objectives are no longer converted into course outcomes. Outcome sections stop at unit/content boundaries, and numbered or bulleted outcomes retain provenance for generated identifiers.
+- CO-PO tables are combined across pages. Conflicting duplicate cells retain the first printed value and enter the review ledger.
+- The source audit now checks missing recognizable units/outcomes, topic coverage of unit bodies, Unicode text, identifier boundaries, book fields, and course-scope evidence after online review. The response also lists checks that still require visual or structural review.
+- UTF-8 TXT/Markdown input normalizes Windows, Unix, and legacy carriage-return line endings before parsing, so anchored headings behave consistently.
+- These tests cover many materially different layouts; they do not claim that every possible visual design, damaged scan, handwritten syllabus, or ambiguous table can be extracted automatically. Such pages remain marked for review.
+
 - Automated checks: 36 Python tests and 6 JavaScript tests passed.
 - Browser: all seven navigation pages checked at 1440px and 390px; no horizontal overflow on those pages or runtime exceptions. Ctrl+K opened the command menu and navigated to Extract. Reduced-motion mode produced zero running page animations.
 - Real document workflow: generated PDF → one detected course → two extracted units; local provenance recorded. Book search returned the correct source page. Local assistant used the loaded units and returned an empty-context explanation after changing documents. Extraction cancellation restored the controls.
