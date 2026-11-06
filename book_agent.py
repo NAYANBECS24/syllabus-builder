@@ -198,4 +198,3 @@ def build_report(
             "results": [],
         },
     }
-
