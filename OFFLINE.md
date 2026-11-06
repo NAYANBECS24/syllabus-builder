@@ -55,6 +55,12 @@ flowchart TD
 
 `document_ingest.py` owns adapters, OCR and source reports. `sylex.py` owns parsing. `offline_cache.py` stores reusable page content. `offline.js` handles browser recovery; `service-worker.js` caches public UI files only. `local-assistant.js` retrieves source excerpts and generates explicitly suggested study/question templates.
 
+## Offline Book Agent
+
+Book Explorer includes a deterministic research agent that works without an internet connection. It builds a reading path from the uploaded book's indexed PDF pages, aligns those pages with the active syllabus topics, reports coverage gaps, and keeps every recommendation linked to a page excerpt. It does not create unsupported summaries or silently claim that a missing topic is covered.
+
+Book Finder also searches the browser's saved research shelf and books already attached to the active syllabus while offline. Live edition discovery, price/availability checks and new public-access links still require internet access. Save useful catalog findings to the research shelf before disconnecting.
+
 ## Correctness protections
 
 - Catalog hints no longer truncate a course to its first page. Explicit end-page overrides remain supported.
@@ -65,6 +71,7 @@ flowchart TD
 - Cloud failure falls back to local extraction with accurate mode reporting. Failed cloud attempts are not cached as cloud success. Rules-only online fast paths are labeled local.
 - Browser replay requires matching file bytes, filename and extraction settings. Invalid uploads and cancellation cannot become cached success. Storage failure does not prevent fresh extraction.
 - Local assistant plans preserve topics and do not invent missing hours or credits. Source excerpts cite course-page ranges; generated practice questions and session allocations are labeled suggestions.
+- Book Agent reading paths and syllabus matches cite indexed PDF pages. Optional online enhancement is disabled by default and is never required for local analysis.
 
 ## Storage and recovery
 

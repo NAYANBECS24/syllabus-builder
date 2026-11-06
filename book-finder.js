@@ -1059,6 +1059,96 @@ function openBookFinder(book) {
   window.setTimeout(() => searchFinder(), 0);
 }
 
+function offlineFinderData(title, author, isbn) {
+  const key = value => String(value || '').toLocaleLowerCase().normalize('NFKC').match(/[\p{L}\p{N}]+/gu)?.join(' ') || '';
+  const titleTerms = key(title).split(' ').filter(term => term.length > 1);
+  const authorTerms = key(author).split(' ').filter(term => term.length > 1);
+  const candidates = [];
+  const add = (record, sourceName) => {
+    if (!record?.title) return;
+    const normalized = normalizeShelfRecord({
+      ...record,
+      authors: record.authors || (record.author ? [record.author] : []),
+      identifiers: record.identifiers || (record.isbn ? [record.isbn] : []),
+    });
+    if (!normalized) return;
+    const candidateTitle = key(normalized.title);
+    const candidateAuthor = key(normalized.authors.join(' '));
+    const candidateIsbns = normalized.identifiers || [];
+    const exactIsbn = Boolean(isbn && candidateIsbns.includes(isbn));
+    const titleHits = titleTerms.filter(term => candidateTitle.includes(term)).length;
+    const authorHits = authorTerms.filter(term => candidateAuthor.includes(term)).length;
+    const titleScore = titleTerms.length ? titleHits / titleTerms.length : 0;
+    const authorScore = authorTerms.length ? authorHits / authorTerms.length : 1;
+    if (!exactIsbn && titleScore < .5) return;
+    if (authorTerms.length && authorScore < .5) return;
+    const confidence = exactIsbn ? 99 : Math.round((titleScore * .75 + authorScore * .25) * 100);
+    candidates.push({
+      ...normalized,
+      sources: [{ name: sourceName, url: '' }],
+      source_names: [sourceName],
+      match_confidence: confidence,
+      match_label: exactIsbn ? 'Exact saved ISBN' : 'Offline saved match',
+      confidence_signals: [sourceName, exactIsbn ? 'ISBN matched locally' : 'Title and author matched locally'],
+      downloads: [],
+      is_best_match: false,
+    });
+  };
+  finderState.shelf.forEach(record => add(record, 'Saved research shelf'));
+  const syllabusBooks = Array.isArray(window.STATE?.task2Result?.books) ? window.STATE.task2Result.books : [];
+  syllabusBooks.forEach(record => add(record, 'Active syllabus reference'));
+  const seen = new Set();
+  const results = candidates
+    .sort((a, b) => b.match_confidence - a.match_confidence)
+    .filter(record => !seen.has(record.shelf_id) && seen.add(record.shelf_id));
+  if (results[0]) results[0].is_best_match = true;
+  return {
+    query: { title, author, isbn },
+    results,
+    providers: [
+      { name: 'Saved shelf', status: 'available', matches: results.filter(item => item.source_names.includes('Saved research shelf')).length },
+      { name: 'Active syllabus', status: 'available', matches: results.filter(item => item.source_names.includes('Active syllabus reference')).length },
+    ],
+    coverage: { candidates_evaluated: finderState.shelf.length + syllabusBooks.length, unique_books_ranked: results.length, providers_checked: 2, low_confidence_discarded: 0 },
+    agent: { strategy: 'Offline library agent', stages: [
+      { name: 'Search local', detail: 'Checked the saved research shelf in this browser' },
+      { name: 'Check syllabus', detail: 'Compared references from the active extracted course' },
+      { name: 'Rank', detail: `${results.length} local match${results.length === 1 ? '' : 'es'} retained` },
+    ] },
+    configuration: { keyless_sources: [] },
+    legal_notice: 'Offline results come from this browser’s saved shelf and the active syllabus. Reconnect to verify live editions and access with public catalogs.',
+    offline: true,
+  };
+}
+
+function mergeFinderLocalEvidence(data, local) {
+  if (!local?.results?.length) return data;
+  const merged = { ...data };
+  const onlineResults = Array.isArray(data?.results) ? data.results.slice() : [];
+  const identities = new Set(onlineResults.map(finderShelfId));
+  local.results.forEach(record => {
+    const id = finderShelfId(record);
+    if (!identities.has(id)) {
+      identities.add(id);
+      onlineResults.push(record);
+    }
+  });
+  merged.results = onlineResults;
+  merged.providers = [...(Array.isArray(data?.providers) ? data.providers : []), ...local.providers];
+  merged.coverage = {
+    ...(data?.coverage || {}),
+    candidates_evaluated: (Number(data?.coverage?.candidates_evaluated) || 0) + (Number(local.coverage?.candidates_evaluated) || 0),
+    unique_books_ranked: onlineResults.length,
+  };
+  merged.agent = {
+    ...(data?.agent || {}),
+    stages: [...(Array.isArray(data?.agent?.stages) ? data.agent.stages : []), {
+      name: 'Local memory', detail: `${local.results.length} saved shelf or syllabus match${local.results.length === 1 ? '' : 'es'} considered`,
+    }],
+  };
+  return merged;
+}
+
 async function searchFinder(event) {
   event?.preventDefault();
   const title = finderElement('finder-title')?.value.replace(/\s+/g, ' ').trim() || '';
@@ -1081,9 +1171,14 @@ async function searchFinder(event) {
     return;
   }
   if (!window.STATE?.serverOnline && typeof window.checkServer === 'function') await window.checkServer(true);
-  if (!window.STATE?.serverOnline) {
-    finderToast('Connect the SYLEX server to search public catalogs', 'error');
-    setFinderProviderStatus('Server connection required');
+  if (navigator.onLine === false || !window.STATE?.serverOnline) {
+    const offline = offlineFinderData(title, author, isbn);
+    renderFinderResults(offline);
+    setFinderProviderStatus('Offline agent · saved shelf and syllabus references');
+    setFinderSummary(offline.results.length
+      ? `${offline.results.length} local match${offline.results.length === 1 ? '' : 'es'} found. Reconnect for live edition and access verification.`
+      : 'No matching saved edition or active syllabus reference. Reconnect for public catalog discovery.');
+    finderToast(offline.results.length ? 'Offline book matches found' : 'No offline book match found', offline.results.length ? 'success' : 'info');
     return;
   }
   finderState.abortController?.abort();
@@ -1101,11 +1196,20 @@ async function searchFinder(event) {
   try {
     const data = await window.SylexAPI.request('book-discovery', { json: { title, author, isbn }, signal: controller.signal, timeout: BOOK_FINDER_TIMEOUT_MS });
     if (finderState.abortController !== controller) return;
-    renderFinderResults(data);
-    finderToast(data.results?.length ? 'Catalog matches updated' : 'No catalog matches found', data.results?.length ? 'success' : 'info');
+    const combined = mergeFinderLocalEvidence(data, offlineFinderData(title, author, isbn));
+    renderFinderResults(combined);
+    finderToast(combined.results?.length ? 'Book matches updated' : 'No book matches found', combined.results?.length ? 'success' : 'info');
   } catch (error) {
     if (finderState.abortController !== controller) return;
     const timedOut = error?.name === 'AbortError';
+    const offline = offlineFinderData(title, author, isbn);
+    if (offline.results.length) {
+      renderFinderResults(offline);
+      setFinderProviderStatus('Catalog unavailable · showing offline matches');
+      setFinderSummary(`${offline.results.length} local match${offline.results.length === 1 ? '' : 'es'} found while public catalogs were unavailable.`);
+      finderToast('Showing offline shelf and syllabus matches', 'info');
+      return;
+    }
     setFinderProviderStatus(timedOut ? 'Catalog search timed out' : 'Catalog search failed');
     setFinderSummary(timedOut ? 'The public catalog request took too long. Please try again.' : (error.message || 'Unable to search public catalogs right now.'));
     finderElement('finder-results')?.replaceChildren(finderEmptyState(

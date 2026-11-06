@@ -1,5 +1,5 @@
 /* Only the public app shell is cached here. No uploads, API replies or secrets. */
-const CACHE = 'sylex-shell-v5.0';
+const CACHE = 'sylex-shell-v5.1';
 const ASSETS = ['index.html', 'styles.css', 'chat.css', 'cinematic.css', 'workspace.css', 'studio.css',
   'demo-data.js', 'api-client.js', 'app.js', 'book.js', 'book-finder.js', 'chat.js', 'cinematic.js',
   'workspace.js', 'studio-core.js', 'studio-store.js', 'studio.js', 'offline.js', 'local-assistant.js'];

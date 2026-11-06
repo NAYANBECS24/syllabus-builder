@@ -5,7 +5,7 @@
   "functions": {
     "api/*.py": {
       "maxDuration": 60,
-      "includeFiles": "{sylex.py,sylex_server.py,document_ingest.py,offline_cache.py,cloud_models.py,online_pipeline.py,SYSTEM_PROMPT.md}"
+      "includeFiles": "{sylex.py,sylex_server.py,document_ingest.py,offline_cache.py,cloud_models.py,online_pipeline.py,book_agent.py,SYSTEM_PROMPT.md}"
     }
   }
 }

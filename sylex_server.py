@@ -472,6 +472,12 @@ class Handler(BaseHTTPRequestHandler):
                     },
                     "cloud_configured": bool(DEFAULT_NVIDIA_API_KEY),
                     "online_review": {"page_evidence": True, "max_text_chunks": 6, "max_vision_pages": 3, "page_ranges": True},
+                    "book_agent": {
+                        "local_page_evidence": True,
+                        "syllabus_alignment": True,
+                        "offline_shelf_search": True,
+                        "online_metadata_only": True,
+                    },
                     "google_books_configured": bool(DEFAULT_GOOGLE_BOOKS_API_KEY),
                     "catalog_providers": 6,
                     "note": "Configuration only; use connection checks to verify upstream availability.",
@@ -729,7 +735,7 @@ class Handler(BaseHTTPRequestHandler):
                     raise RequestError("Content-Type must be multipart/form-data", 415)
                 length = self._content_length(MAX_UPLOAD_BYTES)
                 body = self.rfile.read(length)
-                pdf_bytes, pdf_filename, query, search_mode = self._parse_book_search_multipart(ctype, body)
+                pdf_bytes, pdf_filename, query, search_mode, context, online_enhance = self._parse_book_search_multipart(ctype, body)
 
                 if not pdf_bytes:
                     raise RequestError("Select a book PDF before searching")
@@ -752,6 +758,39 @@ class Handler(BaseHTTPRequestHandler):
                 results, total_matches = self._search_book_pages(
                     book_index["pages"], query, book_index.get("outline", []), search_mode
                 )
+                from book_agent import build_report
+                agent_report = build_report(
+                    book_index["pages"], book_index.get("outline", []), query,
+                    search_mode, results, self._search_book_pages, context,
+                )
+                identity = self._book_agent_identity(book_index, pdf_filename or "book.pdf")
+                if online_enhance:
+                    agent_report["online"]["requested"] = True
+                    if identity.get("title") or identity.get("isbn"):
+                        discovery = self._discover_catalog_books(
+                            identity.get("title", ""), identity.get("author", ""), identity.get("isbn", "")
+                        )
+                        available = sum(1 for provider in discovery.get("providers", []) if provider.get("status") == "available")
+                        agent_report["online"].update({
+                            "status": (
+                                "enhanced" if discovery.get("results")
+                                else "no_match" if available
+                                else "unavailable"
+                            ),
+                            "message": (
+                                f"{available} catalog providers responded; {len(discovery.get('results', []))} edition matches found."
+                                if available else "Public catalogs were unavailable; local analysis is complete."
+                            ),
+                            "metadata_sent": identity,
+                            "providers": discovery.get("providers", []),
+                            "results": discovery.get("results", [])[:6],
+                            "fallback_links": discovery.get("fallback_links", []),
+                        })
+                    else:
+                        agent_report["online"].update({
+                            "status": "metadata_missing",
+                            "message": "The PDF has no usable title or ISBN metadata. Local analysis is complete; enter the title in Book Finder for catalog discovery.",
+                        })
                 searchable_ratio = round(
                     (book_index["searchable_pages"] / max(1, book_index["page_count"])) * 100
                 )
@@ -781,6 +820,8 @@ class Handler(BaseHTTPRequestHandler):
                     },
                     "total_matches": total_matches,
                     "results": results,
+                    "agent": agent_report,
+                    "book_identity": identity,
                     "cached": cache_hit,
                 })
                 return
@@ -1372,7 +1413,7 @@ class Handler(BaseHTTPRequestHandler):
 
         return pdf_bytes, pdf_filename, course, hints_json, debug_flag, mode, provider, model, api_key, endpoint
 
-    def _parse_book_search_multipart(self, ctype: str, body: bytes) -> Tuple[Optional[bytes], Optional[str], str, str]:
+    def _parse_book_search_multipart(self, ctype: str, body: bytes) -> Tuple[Optional[bytes], Optional[str], str, str, Dict[str, Any], bool]:
         """Read a book PDF and topic query from a multipart search request."""
         import email
         msg = email.message_from_bytes(f"Content-Type: {ctype}\r\n\r\n".encode() + body)
@@ -1380,6 +1421,8 @@ class Handler(BaseHTTPRequestHandler):
         pdf_filename: Optional[str] = None
         query = ""
         search_mode = "balanced"
+        context: Dict[str, Any] = {}
+        online_enhance = False
 
         if not msg.is_multipart():
             raise RequestError("Content-Type must be multipart/form-data", 415)
@@ -1397,8 +1440,25 @@ class Handler(BaseHTTPRequestHandler):
                 value = part.get_payload(decode=True)
                 if isinstance(value, bytes):
                     search_mode = value.decode("utf-8", "ignore").strip().casefold() or "balanced"
+            elif 'name="context"' in disposition:
+                value = part.get_payload(decode=True)
+                if isinstance(value, bytes):
+                    raw_context = value.decode("utf-8", "ignore")
+                    if len(raw_context) > 250_000:
+                        raise RequestError("Book agent syllabus context is too large")
+                    try:
+                        parsed_context = json.loads(raw_context) if raw_context.strip() else {}
+                    except json.JSONDecodeError as exc:
+                        raise RequestError("Book agent context must be valid JSON") from exc
+                    if not isinstance(parsed_context, dict):
+                        raise RequestError("Book agent context must be an object")
+                    context = parsed_context
+            elif 'name="online"' in disposition:
+                value = part.get_payload(decode=True)
+                if isinstance(value, bytes):
+                    online_enhance = value.decode("utf-8", "ignore").strip().casefold() in {"1", "true", "yes", "on"}
 
-        return pdf_bytes, pdf_filename, query, search_mode
+        return pdf_bytes, pdf_filename, query, search_mode, context, online_enhance
 
     def _parse_book_page_multipart(self, ctype: str, body: bytes) -> Tuple[Optional[bytes], str]:
         """Read a book PDF and selected one-based page number from multipart data."""
@@ -1433,6 +1493,7 @@ class Handler(BaseHTTPRequestHandler):
             pages = []
             raw_pages = []
             searchable_pages = 0
+            document_metadata = document.metadata if isinstance(document.metadata, dict) else {}
             for page_number, page in enumerate(document, start=1):
                 try:
                     raw_text = page.get_text("text", sort=True)
@@ -1450,9 +1511,37 @@ class Handler(BaseHTTPRequestHandler):
                 "searchable_pages": searchable_pages,
                 "pages": pages,
                 "outline": self._extract_book_outline(raw_pages),
+                "metadata": {
+                    "title": re.sub(r"\s+", " ", str(document_metadata.get("title") or "")).strip()[:180],
+                    "author": re.sub(r"\s+", " ", str(document_metadata.get("author") or "")).strip()[:160],
+                    "subject": re.sub(r"\s+", " ", str(document_metadata.get("subject") or "")).strip()[:240],
+                    "isbn_candidates": re.findall(
+                        r"(?i)\b(?:ISBN(?:-1[03])?\s*[:#-]?\s*)?((?:97[89][\s-]?)?\d[\dXx\s-]{8,20}\d|\d[\dXx\s-]{7,18}[\dXx])\b",
+                        "\n".join(item["text"] for item in raw_pages[:12]),
+                    )[:20],
+                },
             }
         finally:
             document.close()
+
+    def _book_agent_identity(self, book_index: Dict[str, Any], filename: str) -> Dict[str, str]:
+        """Derive bounded metadata for catalog lookup without sending book pages."""
+        metadata = book_index.get("metadata") if isinstance(book_index.get("metadata"), dict) else {}
+        title = re.sub(r"\s+", " ", str(metadata.get("title") or "")).strip()
+        if not title or title.casefold() in {"untitled", "microsoft word", "document"}:
+            stem = Path(filename or "").stem
+            candidate = re.sub(r"[_-]+", " ", stem)
+            candidate = re.sub(r"(?i)\b(?:book|textbook|ebook|pdf|scan|copy)\b", " ", candidate)
+            candidate = re.sub(r"\s+", " ", candidate).strip()
+            title = candidate if len(candidate) >= 3 else ""
+        author = re.sub(r"\s+", " ", str(metadata.get("author") or "")).strip()
+        isbn = ""
+        for candidate in metadata.get("isbn_candidates", []):
+            isbn = self._normalize_isbn(candidate)
+            if isbn:
+                break
+        return {"title": title[:MAX_BOOK_DISCOVERY_TITLE_CHARS],
+                "author": author[:MAX_BOOK_DISCOVERY_AUTHOR_CHARS], "isbn": isbn}
 
     def _create_book_page_pdf(self, pdf_bytes: bytes, page_number: int) -> bytes:
         """Return a standalone PDF containing exactly the requested source page."""

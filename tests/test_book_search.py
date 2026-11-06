@@ -93,7 +93,7 @@ class BookSearchTests(unittest.TestCase):
             "Content-Type: application/pdf\r\n\r\n"
         ).encode() + b"%PDF-test\r\n" + f"--{boundary}--\r\n".encode()
 
-        pdf, filename, query, mode = self.handler._parse_book_search_multipart(
+        pdf, filename, query, mode, context, online = self.handler._parse_book_search_multipart(
             f"multipart/form-data; boundary={boundary}", body
         )
 
@@ -101,6 +101,8 @@ class BookSearchTests(unittest.TestCase):
         self.assertEqual(filename, "algorithms.pdf")
         self.assertEqual(query, "binary search tree")
         self.assertEqual(mode, "broad")
+        self.assertEqual(context, {})
+        self.assertFalse(online)
 
 
 if __name__ == "__main__":

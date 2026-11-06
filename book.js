@@ -67,6 +67,8 @@ function resetBookSearch() {
   setBookOutlineEmpty('Detected chapters, units, lessons, and numbered sections appear here.');
   const insight = bookElement('book-search-insight');
   if (insight) insight.hidden = true;
+  const agent = bookElement('book-agent-report');
+  if (agent) agent.hidden = true;
 }
 
 function setBookViewerLoading(isLoading, message = 'Opening full book…') {
@@ -171,6 +173,8 @@ function clearBookFile() {
   setBookOutlineEmpty('Select a book PDF before viewing its contents.');
   const insight = bookElement('book-search-insight');
   if (insight) insight.hidden = true;
+  const agent = bookElement('book-agent-report');
+  if (agent) agent.hidden = true;
   showBookViewerEmpty();
 }
 
@@ -178,12 +182,14 @@ function setBookSearchBusy(isBusy) {
   const button = bookElement('book-search-button');
   const query = bookElement('book-query');
   const mode = bookElement('book-search-mode');
+  const online = bookElement('book-online-enhance');
   if (button) {
     button.disabled = isBusy || !window.STATE.bookFile;
     button.textContent = isBusy ? 'Searching…' : 'Search';
   }
   if (query) query.setAttribute('aria-busy', String(isBusy));
   if (mode) mode.disabled = isBusy;
+  if (online) online.disabled = isBusy;
 }
 
 async function ensureBookSearchService() {
@@ -303,6 +309,89 @@ function renderBookSearchInsight(data) {
   panel.hidden = false;
 }
 
+function renderBookAgent(data) {
+  const report = data?.agent;
+  const panel = bookElement('book-agent-report');
+  if (!panel || !report) {
+    if (panel) panel.hidden = true;
+    return;
+  }
+  const status = bookElement('book-agent-status');
+  const mode = bookElement('book-agent-mode');
+  const message = bookElement('book-agent-message');
+  const coverage = bookElement('book-agent-coverage');
+  const path = bookElement('book-agent-path');
+  const gaps = bookElement('book-agent-gaps');
+  const online = bookElement('book-agent-online');
+  if (status) status.textContent = report.status === 'ready' ? 'Reading path ready' : report.status === 'context_matches' ? 'Syllabus matches found' : 'Review needed';
+  if (mode) mode.textContent = report.online?.status === 'enhanced'
+    ? 'Hybrid'
+    : report.online?.requested ? 'Offline fallback' : 'Offline';
+  if (message) message.textContent = report.message || 'Local evidence analysis complete.';
+
+  const alignment = report.syllabus_alignment || {};
+  if (coverage) {
+    coverage.hidden = !alignment.available;
+    if (alignment.available) {
+      const limited = alignment.limited ? ' · first 40 unique topics checked' : '';
+      coverage.replaceChildren();
+      const title = document.createElement('strong');
+      title.textContent = `${alignment.coverage_percent ?? 0}% syllabus coverage in this book`;
+      const detail = document.createElement('span');
+      detail.textContent = `${alignment.topics_covered || 0} of ${alignment.topics_checked || 0} checked topics have page evidence${limited}.`;
+      coverage.append(title, detail);
+    }
+  }
+
+  if (path) {
+    const steps = Array.isArray(report.reading_path) ? report.reading_path : [];
+    path.replaceChildren(...steps.map(step => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'book-agent-step';
+      const page = document.createElement('span');
+      page.textContent = `p.${step.page}`;
+      const copy = document.createElement('div');
+      const title = document.createElement('strong');
+      title.textContent = `${step.order}. ${step.role} · ${step.reason}`;
+      const evidence = document.createElement('small');
+      evidence.textContent = step.section || step.evidence || `Source page ${step.page}`;
+      copy.append(title, evidence);
+      button.append(page, copy);
+      button.addEventListener('click', () => openBookPage(step.page, null, true));
+      return button;
+    }));
+  }
+
+  if (gaps) {
+    const missing = Array.isArray(alignment.gaps) ? alignment.gaps : [];
+    gaps.replaceChildren();
+    if (missing.length) {
+      const label = document.createElement('strong');
+      label.textContent = 'Coverage gaps: ';
+      gaps.append(label, document.createTextNode(missing.slice(0, 5).map(item => item.text).join(' · ')));
+    }
+  }
+
+  if (online) {
+    online.replaceChildren();
+    const onlineReport = report.online || {};
+    const label = document.createElement('strong');
+    label.textContent = onlineReport.requested ? 'Online enhancement: ' : 'Offline mode: ';
+    online.append(label, document.createTextNode(onlineReport.message || 'Local analysis completed.'));
+    const matches = Array.isArray(onlineReport.results) ? onlineReport.results : [];
+    if (matches.length && typeof window.openBookFinder === 'function') {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'btn btn-sm btn-secondary';
+      button.textContent = `Review ${matches.length} catalog match${matches.length === 1 ? '' : 'es'}`;
+      button.addEventListener('click', () => window.openBookFinder(matches[0]));
+      online.append(document.createElement('br'), button);
+    }
+  }
+  panel.hidden = false;
+}
+
 function renderBookResults(data) {
   const results = Array.isArray(data.results) ? data.results : [];
   const list = bookElement('book-search-results');
@@ -321,6 +410,7 @@ function renderBookResults(data) {
     status.textContent = data.cached ? `Index reused · ${indexed}` : indexed;
   }
   renderBookSearchInsight(data);
+  renderBookAgent(data);
   renderBookOutline(data.outline);
 
   if (!list) return;
@@ -401,6 +491,17 @@ async function searchBook(event) {
   formData.append('book', file, file.name);
   formData.append('query', query);
   formData.append('mode', mode);
+  formData.append('online', bookElement('book-online-enhance')?.checked ? 'true' : 'false');
+  const task2 = window.STATE?.task2Result;
+  if (task2?.course) {
+    const units = (task2.units || []).slice(0, 20).map(unit => ({
+      number: unit.number,
+      title: unit.title,
+      text: unit.text,
+      topics: (unit.topics || []).slice(0, 20).map(topic => ({ text: topic.text })),
+    }));
+    formData.append('context', JSON.stringify({ task2: { course: task2.course, units } }));
+  }
   setBookSearchBusy(true);
   setBookSearchStatus('Searching pages…');
 

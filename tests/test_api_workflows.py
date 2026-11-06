@@ -74,6 +74,8 @@ class APIWorkflowTests(unittest.TestCase):
         status, data = self.request('/api/status')
         self.assertEqual(status, 200)
         self.assertTrue(data['capabilities']['pdf']['pymupdf'])
+        self.assertTrue(data['capabilities']['book_agent']['local_page_evidence'])
+        self.assertTrue(data['capabilities']['book_agent']['online_metadata_only'])
         for path in ['/workspace.css?v=1', '/workspace.js?v=1', '/cinematic.css?v=2']:
             self.assertEqual(self.request(path)[0], 200)
         self.assertEqual(self.request('/.env')[0], 404)
@@ -104,12 +106,37 @@ class APIWorkflowTests(unittest.TestCase):
         self.assertEqual(status, 200, data)
         self.assertGreater(data['total_matches'], 0)
         self.assertEqual(data['results'][0]['page'], 1)
+        self.assertEqual(data['agent']['engine'], 'local-evidence-agent')
+        self.assertTrue(data['agent']['reading_path'])
+        self.assertFalse(data['agent']['online']['requested'])
         payload, mime = multipart({'page': '1'}, 'book', self.pdf)
         status, data = self.request('/api/book-page', payload, mime)
         self.assertEqual(status, 200)
         with pymupdf.open(stream=data, filetype='pdf') as document:
             self.assertEqual(len(document), 1)
             self.assertIn('binary search tree', document[0].get_text())
+
+    def test_book_agent_combines_local_syllabus_alignment_with_metadata_only_catalog_review(self):
+        context = {'task2': {'course': {'code': 'CS23301', 'title': 'DATA STRUCTURES'}, 'units': [
+            {'number': 1, 'title': 'TREES', 'topics': [{'text': 'binary search tree'}, {'text': 'dynamic programming'}]}
+        ]}}
+        discovery = {
+            'results': [{'title': 'test-syllabus', 'authors': [], 'identifiers': [], 'sources': []}],
+            'providers': [{'name': 'Open Library', 'status': 'available'}],
+            'fallback_links': [],
+        }
+        payload, mime = multipart({
+            'query': 'binary search tree', 'mode': 'balanced',
+            'context': json.dumps(context), 'online': 'true',
+        }, 'book', self.pdf)
+        with patch.object(server.Handler, '_discover_catalog_books', return_value=discovery) as online:
+            status, data = self.request('/api/book-search', payload, mime)
+        self.assertEqual(status, 200, data)
+        self.assertEqual(data['agent']['syllabus_alignment']['topics_checked'], 2)
+        self.assertEqual(data['agent']['syllabus_alignment']['topics_covered'], 1)
+        self.assertEqual(data['agent']['online']['status'], 'enhanced')
+        self.assertEqual(data['agent']['online']['metadata_sent']['title'], 'test syllabus')
+        online.assert_called_once_with('test syllabus', '', '')
 
     def test_invalid_requests_do_not_generate_sample_results(self):
         for path in ['/api/curriculum-audit', '/api/export-dossier']:

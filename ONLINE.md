@@ -30,6 +30,12 @@ The cloud is not allowed to invent CO–PO matrix alignments. Matrix extraction 
 
 Online mode transmits the selected readable text and, when needed, rendered page images to the configured provider. Offline mode makes no model call. No raw model reasoning is presented as evidence. Provider error messages are sanitized, and external responses are size-limited. Endpoint validation remains at the HTTP boundary.
 
+## Book Agent online enhancement
+
+Book Explorer's online enhancement is opt-in. Local page search, reading-path creation and syllabus alignment finish first. When enabled, only derived title, author and validated ISBN metadata are sent to the existing public catalog discovery pipeline; uploaded PDF text and page excerpts are not sent to catalog providers. The returned edition and access candidates are kept separate from page evidence so a catalog match cannot be mistaken for proof that the book covers a syllabus topic.
+
+If providers time out or the connection disappears, the local report remains usable. Book Finder then falls back to the browser's saved research shelf and active-syllabus books. Public availability is a provider claim and should be checked at the linked source; the app does not treat a search result as a guaranteed legal download.
+
 NVIDIA text and vision requests were tested live with generated syllabi. OpenAI, Gemini and custom endpoint adapters remain available but were not live-tested with user credentials. Hosted operation also depends on the deployment platform's request-size/runtime limits and configured secrets; the code changes do not themselves redeploy the site.
 
 ## Verification

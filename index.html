@@ -611,6 +611,10 @@ python run.py</pre>
             <option value="broad">Broad discovery</option>
           </select>
         </div>
+        <label class="book-agent-online" for="book-online-enhance">
+          <input id="book-online-enhance" type="checkbox"/>
+          <span><strong>Online edition enhancement</strong><small>Send title, author, and ISBN metadata only to public catalogs. Page text stays local.</small></span>
+        </label>
         <p class="book-field-help">Balanced mode combines phrase, concept coverage, rarity, proximity, and section evidence.</p>
       </form>
 
@@ -625,6 +629,15 @@ python run.py</pre>
         <div><strong id="book-search-insight-title">Research intelligence</strong><span id="book-search-insight-detail">—</span></div>
         <div id="book-search-terms" class="book-search-terms"></div>
       </div>
+
+      <section id="book-agent-report" class="book-agent-report" hidden aria-live="polite">
+        <div class="book-agent-heading"><div><span>Research agent</span><strong id="book-agent-status">Local evidence ready</strong></div><span id="book-agent-mode" class="book-agent-mode">Offline</span></div>
+        <p id="book-agent-message"></p>
+        <div id="book-agent-coverage" class="book-agent-coverage" hidden></div>
+        <div id="book-agent-path" class="book-agent-path"></div>
+        <div id="book-agent-gaps" class="book-agent-gaps"></div>
+        <div id="book-agent-online" class="book-agent-online-results"></div>
+      </section>
 
       <div class="book-results-header">
         <div><strong>Matching pages</strong><span id="book-results-count">Upload a book to begin</span></div>
@@ -674,7 +687,7 @@ python run.py</pre>
     <div>
       <div class="eyebrow-label">Book Finder</div>
       <h1 class="section-title">Build your reading shelf.</h1>
-      <p class="section-sub">Find the right edition, compare catalog evidence, and collect the books behind your next idea.</p>
+      <p class="section-sub">Find the right edition online, search saved books and syllabus references offline, and collect the books behind your next idea.</p>
     </div>
     <div class="finder-trust-note" role="note">Public catalogs · provider-authorized links only</div>
   </header>
@@ -713,6 +726,7 @@ python run.py</pre>
           <li>Transparent title, author, edition, and catalog-verification confidence</li>
           <li>Edition-aware alternatives when an exact access option is unavailable</li>
           <li>Provider-authorized PDF/EPUB downloads, PDF analysis, and public reading links</li>
+          <li>Offline matching against your saved research shelf and active syllabus references</li>
         </ul>
       </div>
     </aside>
